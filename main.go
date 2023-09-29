@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -112,7 +113,23 @@ func main() {
     ip := *ListenIP
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-        statusCode := http.StatusOK
+
+		var statusCode int
+
+		_, err := os.Stat(strings.Join([]string{dir, r.URL.Path}, "/"))
+
+		if err != nil {
+			if os.IsNotExist(err) {
+				statusCode = http.StatusNotFound
+			} else if os.IsPermission(err) {
+				statusCode = http.StatusForbidden
+			} else {
+				statusCode = http.StatusInternalServerError
+			}
+		} else {
+        	statusCode = http.StatusOK
+		}
+
         rw := &responseWriterWithSize{w, statusCode, 0}
 		http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
 		logRequest(logger, r, rw.Size, statusCode)
