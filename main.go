@@ -9,14 +9,24 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
 type responseWriterWithSize struct {
 	http.ResponseWriter
-	statusCode int
+	StatusCode int
 	Size       int
+}
+
+func (w *responseWriterWithSize) WriteHeader(statusCode int) {
+	w.StatusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriterWithSize) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	w.Size += n
+	return n, err
 }
 
 func logRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
@@ -26,17 +36,6 @@ func logRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 	requestPath := r.URL.Path
 	httpVersion := r.Proto
 	logger.Printf("%s - - [%s] \"%s %s %s\" %d %d\n", clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
-}
-
-func (w *responseWriterWithSize) WriteHeader(statusCode int) {
-	w.statusCode = statusCode
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *responseWriterWithSize) Write(data []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(data)
-	w.Size += n
-	return n, err
 }
 
 func configureTLS(certFile, keyFile, chainFile string) (*tls.Config, error) {
@@ -70,20 +69,18 @@ func configureTLS(certFile, keyFile, chainFile string) (*tls.Config, error) {
 
 func main() {
 	port := flag.Int("port", 8889, "Port to listen on")
-    ListenIP := flag.String("ip", "127.0.0.1", "IP to listen on")
+	ListenIP := flag.String("ip", "127.0.0.1", "IP to listen on")
 	logFile := flag.String("log", "", "Log file path (empty for stdout)")
 	directory := flag.String("dir", ".", "Directory to serve")
 	certFile := flag.String("cacert", "", "Path to CA certificate file for TLS (optional)")
 	keyFile := flag.String("key", "", "Path to private key file for TLS (optional)")
 	chainFile := flag.String("chain", "", "Path to intermediate certificate chain file for TLS (optional)")
 
-
-	// Parse the command-line flags
 	flag.Parse()
 
 	var logger *log.Logger
 
-    lf := *logFile
+	lf := *logFile
 
 	if lf == "" || lf == "-" {
 		logger = log.New(os.Stdout, "", 0)
@@ -109,40 +106,21 @@ func main() {
 		dir = *directory
 	}
 
-    p := *port
-    ip := *ListenIP
-
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-
-		var statusCode int
-
-		_, err := os.Stat(strings.Join([]string{dir, r.URL.Path}, "/"))
-
-		if err != nil {
-			if os.IsNotExist(err) {
-				statusCode = http.StatusNotFound
-			} else if os.IsPermission(err) {
-				statusCode = http.StatusForbidden
-			} else {
-				statusCode = http.StatusInternalServerError
-			}
-		} else {
-        	statusCode = http.StatusOK
-		}
-
-        rw := &responseWriterWithSize{w, statusCode, 0}
+		rw := &responseWriterWithSize{w, 0, 0}
 		http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
-		logRequest(logger, r, rw.Size, statusCode)
+		logRequest(logger, r, rw.Size, rw.StatusCode)
 	})
 
 	var server *http.Server
 	var tlsConfig *tls.Config
 	var err error
 
-	if *certFile != "" && *keyFile != "" {
-		// TLS configuration with TLS version restriction and intermediate certificates
-		tlsConfig, err = configureTLS(*certFile, *keyFile, *chainFile)
+	p := *port
+	ip := *ListenIP
 
+	if *certFile != "" && *keyFile != "" {
+		tlsConfig, err = configureTLS(*certFile, *keyFile, *chainFile)
 		if err != nil {
 			log.Fatal("Error configuring TLS:", err)
 			os.Exit(1)
@@ -154,7 +132,6 @@ func main() {
 		}
 		err = server.ListenAndServeTLS("", "")
 	} else {
-		// No TLS configuration
 		server = &http.Server{
 			Addr: fmt.Sprintf("%s:%d", ip, p),
 		}
