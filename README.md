@@ -71,3 +71,4 @@ openssl req -new -x509 -key server.key -out server.crt -days 365
 
 * I have not tested TLS with an intermediary certificate chain at all.
 * TLS is locked to a minimum of version 1.2.  I really don't recommend changing this.
+* Go's http.Dir is not security conscious at all.  It will follow sym links out of your directory tree as well as serving every file in whatever dir you give it.
