@@ -41,22 +41,25 @@ func logRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 	logger.Printf("%s - - [%s] \"%s %s %s\" %d %d\n", clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
 }
 
-func configureTLS(certFile, keyFile, chainFile string) (*tls.Config, error) {
+func configureTLS(CAcertFile string, certFile string, keyFile string, clientCertAuth bool) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		log.Fatal("Error loading certificate and key:", err)
+		return nil, err
 	}
 
-	var intermediates *x509.CertPool
-	if chainFile != "" {
-		chainPEM, err := ioutil.ReadFile(chainFile)
+	var CAcert *x509.CertPool
+
+	if CAcertFile != "" {
+		caPEM, err := ioutil.ReadFile(CAcertFile)
 		if err != nil {
-			log.Fatal("Error loading intermediate certificate chain:", err)
+			log.Fatal("Error loading CA certificate:", err)
 			return nil, err
 		}
-		intermediates = x509.NewCertPool()
-		if !intermediates.AppendCertsFromPEM(chainPEM) {
-			log.Fatal("Failed to append intermediate certificate to pool.")
+
+		CAcert = x509.NewCertPool()
+		if !CAcert.AppendCertsFromPEM(caPEM) {
+			log.Fatal("Failed to append CA certificate to pool.")
 			return nil, err
 		}
 	}
@@ -64,11 +67,18 @@ func configureTLS(certFile, keyFile, chainFile string) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
-		RootCAs:      intermediates,
+	}
+
+	if clientCertAuth {
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsConfig.ClientCAs = CAcert
+	} else {
+		tlsConfig.RootCAs = CAcert
 	}
 
 	return tlsConfig, nil
 }
+
 
 func checkLink(dir string, file string, checkHardLinks bool) error {
 	fullPath := filepath.Join(dir, file)
@@ -145,9 +155,10 @@ func main() {
 	ListenIP := flag.String("ip", "127.0.0.1", "IP to listen on")
 	logFile := flag.String("log", "", "Log file path (empty for stdout)")
 	directory := flag.String("dir", ".", "Directory to serve")
-	certFile := flag.String("cacert", "", "Path to CA certificate file for TLS (optional)")
+	CAcertFile := flag.String("cacert", "", "Path to CA certificate file for TLS (optional)")
+	certFile := flag.String("cert", "", "Path to CA certificate file for TLS (optional)")
 	keyFile := flag.String("key", "", "Path to private key file for TLS (optional)")
-	chainFile := flag.String("chain", "", "Path to intermediate certificate chain file for TLS (optional)")
+	clientCertAuth := flag.Bool("clientcertauth", false, "Require client certificate for TLS (optional)")
 	username := flag.String("username", "", "Username for basic auth (optional)")
 	password := flag.String("password", "", "Password for basic auth (optional)")
 	checkHardLinks := flag.Bool("checkhardlinks", false, "Check for hardlinks (optional)")
@@ -220,7 +231,7 @@ func main() {
 	ip := *ListenIP
 
 	if *certFile != "" && *keyFile != "" {
-		tlsConfig, err = configureTLS(*certFile, *keyFile, *chainFile)
+		tlsConfig, err = configureTLS(*CAcertFile, *certFile, *keyFile, *clientCertAuth)
 		if err != nil {
 			log.Fatal("Error configuring TLS:", err)
 			os.Exit(1)
