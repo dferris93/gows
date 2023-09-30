@@ -207,6 +207,7 @@ func main() {
 		if !authStatus {
 			rw.Header().Set("WWW-Authenticate", `Basic realm="Enter username and password"`)
 			http.Error(rw, "401 unauthorized", http.StatusUnauthorized)
+			logRequest(logger, r, rw.Size, rw.StatusCode)
 			return
 		} else {
 			path := filepath.Clean(r.URL.Path)
@@ -215,6 +216,7 @@ func main() {
 				   isDotFile(dir, path) != nil || 
 				   isInAnotherDir(dir, path) != nil {
 						http.Error(rw, "403 forbidden", http.StatusForbidden)
+						logRequest(logger, r, rw.Size, rw.StatusCode)
 						return
 				}
 			} 
