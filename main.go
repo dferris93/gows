@@ -98,7 +98,7 @@ func checkLink(dir string, file string, checkHardLinks bool) error {
 			return err
 		}
 
-		if abspath != filepath.Clean(dir) {
+		if abspath != dir {
 			return fmt.Errorf("insecure symlink: %s", file)
 		}
 	}
