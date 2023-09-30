@@ -102,13 +102,12 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 
 ## Notes
 
-* I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly for the server CA cert.
+* I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
 * TLS is locked to a minimum of version 1.2.  I really don't recommend changing this.
 * gows will not follow symlinks outside of the directory tree.
 * gows can be set to not follow hard links either.
 * gows will not allow access to dot files
-* gows will not traverse directories
 
-There are very good security reasons to not traverse directories, follow links, and avoid dot files.  Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
+Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
 
 This is not a standard web server.  If you want to serve static content for a web site, use a real web server like nginx.  This is a simple server that will allow you to easily share some files if need be.

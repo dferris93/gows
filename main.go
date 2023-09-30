@@ -22,6 +22,7 @@ type responseWriterWithSize struct {
 }
 
 func (w *responseWriterWithSize) WriteHeader(statusCode int) {
+	w.StatusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -81,7 +82,11 @@ func checkLink(dir string, file string, checkHardLinks bool) error {
 	fullPath := filepath.Join(dir, file)
 	fileInfo, err := os.Lstat(fullPath)
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			return nil
+		} else {
+			return err
+		}
 	}
 
 	if fileInfo.Mode()&os.ModeSymlink != 0 {
@@ -90,23 +95,19 @@ func checkLink(dir string, file string, checkHardLinks bool) error {
 			return err
 		}
 
-		abspath, err := filepath.Abs(filepath.Dir(filepath.Join(dir, linkDest)))
+		abspath, err := filepath.Abs(linkDest)
 		if err != nil {
 			return err
 		}
 
-		if abspath != dir {
+		if !strings.HasPrefix(abspath, 
+				dir + string(filepath.Separator)) {
 			return fmt.Errorf("insecure symlink: %s", file)
 		}
 	}
 
-	fileinfo, err := os.Stat(fullPath)
-	if err != nil {
-		return err
-	}
-
 	if checkHardLinks {
-		if stat, ok := fileinfo.Sys().(*syscall.Stat_t); ok {
+		if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
 			nlink := stat.Nlink
 			if nlink > 1 {
 				return fmt.Errorf("hardlink detected: %s", file)
@@ -124,16 +125,6 @@ func isDotFile(dir string, file string) error {
 					return fmt.Errorf("dot file detected: %s", file)
 			}
 	}
-	return nil
-}
-
-func isInAnotherDir(dir string, file string) error {
-	finfo, _ := os.Stat(filepath.Join(dir, file))	
-	
-	if finfo.IsDir() {
-		return fmt.Errorf("directory detected: %s", file)
-	}
-
 	return nil
 }
 
@@ -199,7 +190,7 @@ func main() {
 			authStatus = true
 		}
 
-		rw := &responseWriterWithSize{w, 0, 0}
+		rw := &responseWriterWithSize{w, http.StatusOK, 0}
 
 		if !authStatus {
 			rw.Header().Set("WWW-Authenticate", `Basic realm="Enter username and password"`)
@@ -210,8 +201,7 @@ func main() {
 			path := filepath.Clean(r.URL.Path)
 			if path != "/" {
 				if checkLink(dir, path, *checkHardLinks) != nil || 
-				   isDotFile(dir, path) != nil || 
-				   isInAnotherDir(dir, path) != nil {
+				   isDotFile(dir, path) != nil {
 						http.Error(rw, "403 forbidden", http.StatusForbidden)
 						logRequest(logger, r, rw.Size, rw.StatusCode)
 						return
