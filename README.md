@@ -82,6 +82,24 @@ openssl req -new -x509 -key server.key -out server.crt -days 365
 ./gows --cacert server.crt --key server.key --username admin --password admin
 ```
 
+* TLS cert auth
+```
+ openssl genpkey -algorithm RSA -out ca-key.pem
+ openssl req -new -x509 -key ca-key.pem -out ca-cert.pem -days 3650 -subj "/CN=My CA"
+ openssl genpkey -algorithm RSA -out server-key.pem
+ openssl req -new -key server-key.pem -out server-csr.pem -subj "/CN=localhost"
+ openssl x509 -req -in server-csr.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -days 365
+ openssl genpkey -algorithm RSA -out client-key.pem
+ openssl req -new -key client-key.pem -out client-csr.pem -subj "/CN=Client"
+ openssl x509 -req -in client-csr.pem -CA
+
+ ./gows -cacert ca-cert.pem -cert server-cert.pem -key server-key.pem --clientcertauth
+
+#And then on the client
+curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cacert ca-cert.pem
+
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all.
