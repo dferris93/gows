@@ -22,7 +22,6 @@ type responseWriterWithSize struct {
 }
 
 func (w *responseWriterWithSize) WriteHeader(statusCode int) {
-	w.StatusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -48,6 +47,11 @@ func configureTLS(CAcertFile string, certFile string, keyFile string, clientCert
 		return nil, err
 	}
 
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
 	var CAcert *x509.CertPool
 
 	if CAcertFile != "" {
@@ -62,17 +66,10 @@ func configureTLS(CAcertFile string, certFile string, keyFile string, clientCert
 			log.Fatal("Failed to append CA certificate to pool.")
 			return nil, err
 		}
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	if clientCertAuth {
-		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsConfig.ClientCAs = CAcert
-	} else {
+		if clientCertAuth {
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			tlsConfig.ClientCAs = CAcert
+		} 
 		tlsConfig.RootCAs = CAcert
 	}
 
@@ -219,7 +216,7 @@ func main() {
 						logRequest(logger, r, rw.Size, rw.StatusCode)
 						return
 				}
-			} 
+			}
 			http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
 		}
 		logRequest(logger, r, rw.Size, rw.StatusCode)
