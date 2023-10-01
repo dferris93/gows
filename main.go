@@ -83,6 +83,7 @@ func checkLink(dir string, file string, checkHardLinks bool) error {
 	fileInfo, err := os.Lstat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// if a file doesn't exist we want a 404 not a 403
 			return nil
 		} else {
 			return err
@@ -138,6 +139,33 @@ func checkBasicAuth(r *http.Request, expectedUsername string, expectedPassword s
 	return false
 }
 
+func authCheck(r *http.Request, username, password string) bool {
+	if username != "" && password != "" {
+		return checkBasicAuth(r, username, password)
+	}
+	return true
+}
+
+func isRequestAuthorized(dir, path string, allowInsecure, checkHardLinks bool) bool {
+	if path != "/" {
+		if !allowInsecure {
+			if checkLink(dir, path, checkHardLinks) != nil || isDotFile(dir, path) != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func logAndReturnError(rw *responseWriterWithSize, logger *log.Logger, r *http.Request, ac bool, errorMsg string, errorCode int) {
+	if !ac {
+		rw.Header().Set("WWW-Authenticate", `Basic realm="Enter username and password"`)
+	}
+	http.Error(rw, errorMsg, errorCode)
+	logRequest(logger, r, rw.Size, rw.StatusCode)
+}
+
+
 func main() {
 	port := flag.Int("port", 8889, "Port to listen on")
 	ListenIP := flag.String("ip", "127.0.0.1", "IP to listen on")
@@ -183,35 +211,25 @@ func main() {
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var authStatus bool
-
-		if *username != "" && *password != "" {
-			authStatus = checkBasicAuth(r, *username, *password)
-		} else {
-			authStatus = true
-		}
-
 		rw := &responseWriterWithSize{w, http.StatusOK, 0}
 
-		if !authStatus {
-			rw.Header().Set("WWW-Authenticate", `Basic realm="Enter username and password"`)
-			http.Error(rw, "401 unauthorized", http.StatusUnauthorized)
-			logRequest(logger, r, rw.Size, rw.StatusCode)
+		ac := authCheck(r, *username, *password)
+		
+		if !ac {
+			logAndReturnError(rw, logger, r, ac, "401 unauthorized", http.StatusUnauthorized)
 			return
-		} else {
-			path := filepath.Clean(r.URL.Path)
-			if path != "/" {
-				if !*allowInsecure  { 
-					if checkLink(dir, path, *checkHardLinks) != nil || isDotFile(dir, path) != nil {
-							http.Error(rw, "403 forbidden", http.StatusForbidden)
-							logRequest(logger, r, rw.Size, rw.StatusCode)
-							return
-					}
-				}
-			}
-			http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
 		}
+		
+		path := filepath.Clean(r.URL.Path)
+		if !isRequestAuthorized(dir, path, *allowInsecure, *checkHardLinks) {
+			logAndReturnError(rw, logger, r, ac, "403 forbidden", http.StatusForbidden)
+			return
+		}
+		
+		http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
+		
 		logRequest(logger, r, rw.Size, rw.StatusCode)
+
 	})
 
 	var server *http.Server
