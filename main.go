@@ -150,6 +150,7 @@ func main() {
 	username := flag.String("username", "", "Username for basic auth (optional)")
 	password := flag.String("password", "", "Password for basic auth (optional)")
 	checkHardLinks := flag.Bool("checkhardlinks", false, "Check for hardlinks (optional)")
+	allowInsecure := flag.Bool("allowinsecure", false, "Allow insecure symlinks and files (optional)")
 
 	flag.Parse()
 
@@ -200,11 +201,12 @@ func main() {
 		} else {
 			path := filepath.Clean(r.URL.Path)
 			if path != "/" {
-				if checkLink(dir, path, *checkHardLinks) != nil || 
-				   isDotFile(dir, path) != nil {
-						http.Error(rw, "403 forbidden", http.StatusForbidden)
-						logRequest(logger, r, rw.Size, rw.StatusCode)
-						return
+				if !*allowInsecure  { 
+					if checkLink(dir, path, *checkHardLinks) != nil || isDotFile(dir, path) != nil {
+							http.Error(rw, "403 forbidden", http.StatusForbidden)
+							logRequest(logger, r, rw.Size, rw.StatusCode)
+							return
+					}
 				}
 			}
 			http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
