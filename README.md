@@ -104,9 +104,9 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
 * TLS is locked to a minimum of version 1.2.  I really don't recommend changing this.
-* gows will not follow symlinks outside of the directory tree.
+* By default gows will not follow symlinks outside of the directory tree.
 * gows can be set to not follow hard links either.
-* gows will not allow access to dot files
+* By default gows will not allow access to dot files
 
 Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
 
