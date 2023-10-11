@@ -226,7 +226,23 @@ func main() {
 			return
 		}
 		
-		http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
+		fullPath := filepath.Join(dir, filepath.FromSlash(path))
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			logAndReturnError(rw, logger, r, ac, "404 not found", http.StatusNotFound)
+			return
+		}
+		if info.IsDir() {
+			indexFile := filepath.Join(fullPath, "index.html")
+			if _, err := os.Stat(indexFile); err == nil {
+				http.ServeFile(w, r, indexFile)
+				return
+			} else {
+				http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
+			}
+		} else {
+			http.ServeFile(rw, r, fullPath)
+		}
 		
 		logRequest(logger, r, rw.Size, rw.StatusCode)
 
