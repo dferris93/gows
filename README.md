@@ -107,7 +107,6 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * By default gows will not follow symlinks outside of the directory tree.
 * gows can be set to not follow hard links either.
 * By default gows will not allow access to dot files
+* gows will look for an index.html file, if it isn't found, it will serve the entire directory.
 
 Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
-
-This is not a standard web server.  If you want to serve static content for a web site, use a real web server like nginx.  This is a simple server that will allow you to easily share some files if need be.
