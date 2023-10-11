@@ -235,7 +235,7 @@ func main() {
 		if info.IsDir() {
 			indexFile := filepath.Join(fullPath, "index.html")
 			if _, err := os.Stat(indexFile); err == nil {
-				http.ServeFile(w, r, indexFile)
+				http.ServeFile(rw, r, indexFile)
 				return
 			} else {
 				http.FileServer(http.Dir(dir)).ServeHTTP(rw, r)
