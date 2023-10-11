@@ -179,6 +179,7 @@ func main() {
 	password := flag.String("password", "", "Password for basic auth (optional)")
 	checkHardLinks := flag.Bool("checkhardlinks", false, "Check for hardlinks (optional)")
 	allowInsecure := flag.Bool("allowinsecure", false, "Allow insecure symlinks and files (optional)")
+	contentSecurityPolicy := flag.String("csp", "default-src 'self'", "Content Security Policy (optional)")
 
 	flag.Parse()
 
@@ -232,6 +233,8 @@ func main() {
 			logAndReturnError(rw, logger, r, ac, "404 not found", http.StatusNotFound)
 			return
 		}
+		rw.Header().Set("X-Content-Type-Options", "nosniff")
+		rw.Header().Set("Content-Security-Policy", *contentSecurityPolicy)
 		if info.IsDir() {
 			indexFile := filepath.Join(fullPath, "index.html")
 			if _, err := os.Stat(indexFile); err == nil {
