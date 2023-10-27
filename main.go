@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
+	"net"
 	"log"
 	"net/http"
 	"os"
@@ -160,6 +161,29 @@ func authCheck(r *http.Request, username, password string) bool {
 	return true
 }
 
+func checkSubnet(ip string, subnet string) bool {
+	_, ipnet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		log.Fatal(err)
+		return false
+	}
+	return ipnet.Contains(net.ParseIP(ip))
+}
+
+func ipcheck(r *http.Request, allowedIPs []string) bool {
+	remoteAddr := strings.Split(r.RemoteAddr, ":")[0] 
+	for _, ip := range allowedIPs {
+		if strings.Contains(ip, "/") {
+				return checkSubnet(remoteAddr, ip)
+		} else {
+			if remoteAddr == ip {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isRequestAuthorized(dir, path string, allowInsecure, checkHardLinks bool) bool {
 	if path != "/" {
 		if !allowInsecure {
@@ -197,6 +221,7 @@ func makeHeadersMap(headers multiValueFlag) map[string]string {
 		if len(parts) == 2 {
 			headersMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
+
 	}
 	return headersMap
 }
@@ -215,6 +240,7 @@ func main() {
 	password := flag.String("password", "", "Password for basic auth (optional)")
 	checkHardLinks := flag.Bool("checkhardlinks", false, "Check for hardlinks (optional)")
 	allowInsecure := flag.Bool("allowinsecure", false, "Allow insecure symlinks and files (optional)")
+	allowedIPs := flag.String("allowedips", "", "Comma separated list of allowed IPs (optional)")
 
 	var headersFlag multiValueFlag
 
@@ -223,6 +249,12 @@ func main() {
 	flag.Parse()
 
 	headersMap := makeHeadersMap(headersFlag)
+
+	var allowedIPsSlice []string
+
+	if *allowedIPs != "" {
+		allowedIPsSlice = strings.Split(*allowedIPs, ",")	
+	}
 
 	var logger *log.Logger
 
@@ -254,6 +286,15 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		rw := &responseWriterWithSize{w, http.StatusOK, 0}
+
+		var ipc bool 
+		if len(allowedIPsSlice) > 0 {
+			ipc = ipcheck(r, allowedIPsSlice)
+			if !ipc {
+				logAndReturnError(rw, logger, r, ipc, "403 forbidden", http.StatusForbidden)
+				return
+			}
+		}
 
 		ac := authCheck(r, *username, *password)
 		
