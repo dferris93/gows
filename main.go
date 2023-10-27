@@ -32,12 +32,27 @@ func (w *responseWriterWithSize) Write(data []byte) (int, error) {
 }
 
 func logRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
-	clientIP := r.RemoteAddr
 	currentTime := time.Now().Format("02/Jan/2006:15:04:05 -0700")
 	requestMethod := r.Method
 	requestPath := r.URL.Path
 	httpVersion := r.Proto
-	logger.Printf("%s - - [%s] \"%s %s %s\" %d %d\n", clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
+	clientIP := ""
+	proxyIP := strings.Split(r.RemoteAddr, ":")[0] 
+
+	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
+		clientIP = xForwardedFor
+	} else if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
+		clientIP = xRealIP
+	} else {
+		clientIP = proxyIP
+		proxyIP = ""
+	}
+
+	if proxyIP == "" {
+		logger.Printf("%s - - - [%s] \"%s %s %s\" %d %d\n", clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
+	} else {
+		logger.Printf("%s %s - - [%s] \"%s %s %s\" %d %d\n", proxyIP, clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
+	}
 }
 
 func configureTLS(CAcertFile string, certFile string, keyFile string, clientCertAuth bool) (*tls.Config, error) {

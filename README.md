@@ -100,6 +100,11 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 
 ```
 
+* Setting Headers
+```
+./gows --header 'X-Test-Header:Value' --header 'X-Another-Header:Value2' 
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
@@ -108,5 +113,13 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * gows can be set to not follow hard links either.
 * By default gows will not allow access to dot files
 * gows will look for an index.html file, if it isn't found, it will serve the entire directory.
+* If X-Forwarded-For or X-Real-IP is set, that IP will be logged as shown below.
+```
+ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
+```
+* If no proxy is used the log fomat will be:
+```
+ClientIP - - - [time] "method path HTTP/Version" responseCode bytesSent
+```
 
 Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
