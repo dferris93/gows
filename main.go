@@ -165,6 +165,28 @@ func logAndReturnError(rw *responseWriterWithSize, logger *log.Logger, r *http.R
 	logRequest(logger, r, rw.Size, rw.StatusCode)
 }
 
+type multiValueFlag []string
+
+func (m *multiValueFlag) String() string {
+	return fmt.Sprintf("%v", *m)
+}
+
+func (m *multiValueFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func makeHeadersMap(headers multiValueFlag) map[string]string {
+	headersMap := make(map[string]string)
+	for _, header := range headers {
+		parts := strings.SplitN(header, ":", 2)
+		if len(parts) == 2 {
+			headersMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return headersMap
+}
+
 
 func main() {
 	port := flag.Int("port", 8889, "Port to listen on")
@@ -180,7 +202,13 @@ func main() {
 	checkHardLinks := flag.Bool("checkhardlinks", false, "Check for hardlinks (optional)")
 	allowInsecure := flag.Bool("allowinsecure", false, "Allow insecure symlinks and files (optional)")
 
+	var headersFlag multiValueFlag
+
+	flag.Var(&headersFlag, "header", "HTTP headers to include in the response. Can specify multiple.")
+
 	flag.Parse()
+
+	headersMap := makeHeadersMap(headersFlag)
 
 	var logger *log.Logger
 
@@ -231,6 +259,9 @@ func main() {
 		if err != nil {
 			logAndReturnError(rw, logger, r, ac, "404 not found", http.StatusNotFound)
 			return
+		}
+		for key, value := range headersMap {
+			rw.Header().Set(key, value)
 		}
 		if info.IsDir() {
 			indexFile := filepath.Join(fullPath, "index.html")
