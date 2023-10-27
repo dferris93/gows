@@ -113,6 +113,7 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * gows can be set to not follow hard links either.
 * By default gows will not allow access to dot files
 * gows will look for an index.html file, if it isn't found, it will serve the entire directory.
+* custom headers will only be set if the request is successful
 * If X-Forwarded-For or X-Real-IP is set, that IP will be logged as shown below.
 ```
 ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
