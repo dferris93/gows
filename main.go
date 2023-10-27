@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -56,7 +55,7 @@ func configureTLS(CAcertFile string, certFile string, keyFile string, clientCert
 	var CAcert *x509.CertPool
 
 	if CAcertFile != "" {
-		caPEM, err := ioutil.ReadFile(CAcertFile)
+		caPEM, err := os.ReadFile(CAcertFile)
 		if err != nil {
 			log.Fatal("Error loading CA certificate:", err)
 			return nil, err
@@ -260,9 +259,11 @@ func main() {
 			logAndReturnError(rw, logger, r, ac, "404 not found", http.StatusNotFound)
 			return
 		}
+
 		for key, value := range headersMap {
 			rw.Header().Set(key, value)
 		}
+
 		if info.IsDir() {
 			indexFile := filepath.Join(fullPath, "index.html")
 			if _, err := os.Stat(indexFile); err == nil {
