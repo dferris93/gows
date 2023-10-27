@@ -105,6 +105,11 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 ./gows --header 'X-Test-Header:Value' --header 'X-Another-Header:Value2' 
 ```
 
+* IP ACLs
+```
+./gows -allowedips 192.168.1.0/24,10.10.10.1,172.16.5.0/22
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
