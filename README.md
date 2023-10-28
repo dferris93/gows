@@ -26,25 +26,34 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
 ## Useage
 
 ```
-Usage of ./gows:
+  -allowedips string
+    	Comma separated list of allowed IPs (optional)
+  -allowinsecure
+    	Allow insecure symlinks and files (optional)
   -cacert string
-        Path to CA certificate file for TLS (optional)
-  -chain string
-        Path to intermediate certificate chain file for TLS (optional)
+    	Path to CA certificate file for TLS (optional)
+  -cert string
+    	Path to CA certificate file for TLS (optional)
+  -checkhardlinks
+    	Check for hardlinks (optional)
+  -clientcertauth
+    	Require client certificate for TLS (optional)
   -dir string
-        Directory to serve (default ".")
+    	Directory to serve (default ".")
+  -header value
+    	HTTP headers to include in the response. Can specify multiple.
   -ip string
-        IP to listen on (default "127.0.0.1")
+    	IP to listen on (default "127.0.0.1")
   -key string
-        Path to private key file for TLS (optional)
+    	Path to private key file for TLS (optional)
   -log string
-        Log file path (empty for stdout)
+    	Log file path (empty for stdout)
   -password string
-        Password for basic auth (optional)
+    	Password for basic auth (optional)
   -port int
-        Port to listen on (default 8889)
+    	Port to listen on (default 8889)
   -username string
-        Username for basic auth (optional)
+    	Username for basic auth (optional)
 ```
 
 ## Example
