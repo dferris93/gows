@@ -52,8 +52,11 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
     	Password for basic auth (optional)
   -port int
     	Port to listen on (default 8889)
+  -redirect value
+    	Redirects to add. Can specify multiple.
   -username string
     	Username for basic auth (optional)
+
 ```
 
 ## Example
@@ -117,6 +120,11 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * IP ACLs
 ```
 ./gows -allowedips 192.168.1.0/24,10.10.10.1,172.16.5.0/22
+```
+
+* Redirects
+```
+./gows --redirect '/g:https://www.google.com' -redirect '/a:https://www.amazon.com'
 ```
 
 ## Notes

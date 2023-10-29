@@ -214,16 +214,16 @@ func (m *multiValueFlag) Set(value string) error {
 	return nil
 }
 
-func makeHeadersMap(headers multiValueFlag) map[string]string {
-	headersMap := make(map[string]string)
-	for _, header := range headers {
+func makeMap(f multiValueFlag) map[string]string {
+	m := make(map[string]string)
+	for _, header := range f {
 		parts := strings.SplitN(header, ":", 2)
 		if len(parts) == 2 {
-			headersMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			m[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 
 	}
-	return headersMap
+	return m
 }
 
 
@@ -246,9 +246,14 @@ func main() {
 
 	flag.Var(&headersFlag, "header", "HTTP headers to include in the response. Can specify multiple.")
 
+	var redirectsFlag multiValueFlag
+
+	flag.Var(&redirectsFlag, "redirect", "Redirects to add. Can specify multiple.")
+
 	flag.Parse()
 
-	headersMap := makeHeadersMap(headersFlag)
+	headersMap := makeMap(headersFlag)
+	redirectsMap := makeMap(redirectsFlag)
 
 	var allowedIPsSlice []string
 
@@ -302,12 +307,19 @@ func main() {
 			logAndReturnError(rw, logger, r, ac, "401 unauthorized", http.StatusUnauthorized)
 			return
 		}
+
+		if url, ok := redirectsMap[r.URL.Path]; ok {
+			http.Redirect(rw, r, url, http.StatusFound)
+			logRequest(logger, r, rw.Size, rw.StatusCode)
+			return
+		}
 		
 		path := filepath.Clean(r.URL.Path)
 		if !isRequestAuthorized(dir, path, *allowInsecure, *checkHardLinks) {
 			logAndReturnError(rw, logger, r, ac, "403 forbidden", http.StatusForbidden)
 			return
 		}
+
 		
 		fullPath := filepath.Join(dir, filepath.FromSlash(path))
 		info, err := os.Stat(fullPath)
