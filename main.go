@@ -268,7 +268,7 @@ func main() {
 	if lf == "" || lf == "-" {
 		logger = log.New(os.Stdout, "", 0)
 	} else {
-		lf, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		lf, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening log file: %s\n", err)
 			os.Exit(1)
