@@ -10,9 +10,11 @@ LOG_FILE="$TMP_DIR/gows.log"
 BIN_PATH="${BIN_PATH:-$TMP_DIR/gows}"
 PID_FILE="${PID_FILE:-/tmp/gows-integration.pid}"
 SERVER_PID=""
+SERVER_PIDS=()
+SERVER_PORT=""
 
 cleanup() {
-  stop_server
+  stop_all_servers
   cleanup_stale_pid
   if [[ -f "${PID_FILE}" ]]; then
     rm -f "${PID_FILE}"
@@ -21,7 +23,7 @@ cleanup() {
     rm -rf "${TMP_DIR}"
   fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 log() {
   echo "==> $*"
@@ -44,6 +46,7 @@ build_binary() {
 setup_site() {
   mkdir -p "${SITE_DIR}/protected"
   mkdir -p "${SITE_DIR}/broken"
+  mkdir -p "${SITE_DIR}/subauth"
   mkdir -p "${TMP_DIR}/outside"
   echo "hello" >"${SITE_DIR}/hello.txt"
   echo "secret" >"${SITE_DIR}/.hidden"
@@ -51,9 +54,14 @@ setup_site() {
   echo "hardlink" >"${SITE_DIR}/hardlink-source.txt"
   echo "protected" >"${SITE_DIR}/protected/secret.txt"
   echo "broken" >"${SITE_DIR}/broken/file.txt"
+  echo "subauth" >"${SITE_DIR}/subauth/secret.txt"
   cat >"${SITE_DIR}/protected/.htaccess" <<'EOF'
 username: ht
 password: pass
+EOF
+  cat >"${SITE_DIR}/subauth/.htaccess" <<'EOF'
+username: sub
+password: dir
 EOF
   cat >"${SITE_DIR}/broken/.htaccess" <<'EOF'
 username: only
@@ -145,7 +153,8 @@ start_server() {
   shift
   GOWS_INTEGRATION=1 "${BIN_PATH}" -ip 127.0.0.1 -port "${port}" -dir "${SITE_DIR}" "$@" >"${LOG_FILE}" 2>&1 &
   SERVER_PID="$!"
-  echo "${SERVER_PID}" >"${PID_FILE}"
+  SERVER_PIDS+=("${SERVER_PID}")
+  printf "%s\n" "${SERVER_PIDS[@]}" >"${PID_FILE}"
 }
 
 start_server_retry() {
@@ -156,7 +165,7 @@ start_server_retry() {
     start_server "${port}" "$@"
     sleep 0.1
     if kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
-      echo "${port}"
+      SERVER_PORT="${port}"
       return 0
     fi
     if grep -qi "address already in use" "${LOG_FILE}"; then
@@ -174,7 +183,36 @@ stop_server() {
     wait "${SERVER_PID}" >/dev/null 2>&1 || true
   fi
   SERVER_PID=""
+  rewrite_pid_file
+}
+
+stop_all_servers() {
+  local pid
+  for pid in "${SERVER_PIDS[@]}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      wait "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+  SERVER_PIDS=()
+  SERVER_PID=""
   if [[ -f "${PID_FILE}" ]]; then
+    rm -f "${PID_FILE}"
+  fi
+}
+
+rewrite_pid_file() {
+  local live=()
+  local pid
+  for pid in "${SERVER_PIDS[@]}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+      live+=("${pid}")
+    fi
+  done
+  SERVER_PIDS=("${live[@]}")
+  if [[ "${#SERVER_PIDS[@]}" -gt 0 ]]; then
+    printf "%s\n" "${SERVER_PIDS[@]}" >"${PID_FILE}"
+  elif [[ -f "${PID_FILE}" ]]; then
     rm -f "${PID_FILE}"
   fi
 }
@@ -332,19 +370,18 @@ cleanup_stale_pid() {
     return
   fi
   local pid
-  pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-  if [[ -z "${pid}" ]]; then
-    rm -f "${PID_FILE}"
-    return
-  fi
-  if [[ ! -d "/proc/${pid}" ]]; then
-    rm -f "${PID_FILE}"
-    return
-  fi
-  if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -q "GOWS_INTEGRATION=1"; then
-    kill "${pid}" >/dev/null 2>&1 || true
-    rm -f "${PID_FILE}"
-  fi
+  while read -r pid; do
+    if [[ -z "${pid}" ]]; then
+      continue
+    fi
+    if [[ ! -d "/proc/${pid}" ]]; then
+      continue
+    fi
+    if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -q "GOWS_INTEGRATION=1"; then
+      kill "${pid}" >/dev/null 2>&1 || true
+    fi
+  done <"${PID_FILE}"
+  rm -f "${PID_FILE}"
 }
 
 main() {
@@ -360,7 +397,8 @@ main() {
 
   log "testing HTTP"
   local port
-  port="$(start_server_retry -filter "*.log" -redirect "/r:https://example.com" -header "X-Test: ok")"
+  start_server_retry -filter "*.log" -redirect "/r:https://example.com" -header "X-Test: ok"
+  port="${SERVER_PORT}"
   wait_for_url "http://127.0.0.1:${port}/hello.txt"
   expect_body "hello" "http://127.0.0.1:${port}/hello.txt"
   expect_header "X-Test" "ok" "http://127.0.0.1:${port}/hello.txt"
@@ -372,6 +410,8 @@ main() {
   expect_status "403" "http://127.0.0.1:${port}/.hidden"
   expect_status "401" "http://127.0.0.1:${port}/protected/secret.txt"
   expect_body "protected" "http://127.0.0.1:${port}/protected/secret.txt" -u "ht:pass"
+  expect_status "401" "http://127.0.0.1:${port}/subauth/secret.txt"
+  expect_body "subauth" "http://127.0.0.1:${port}/subauth/secret.txt" -u "sub:dir"
   expect_status "404" "http://127.0.0.1:${port}/protected/.htaccess"
   expect_status "404" "http://127.0.0.1:${port}/broken/file.txt"
   expect_status "404" "http://127.0.0.1:${port}/app.log"
@@ -389,7 +429,8 @@ main() {
   stop_server
 
   log "testing HTTP allowdotfiles + insecure"
-  port="$(start_server_retry -allowdotfiles -insecure)"
+  start_server_retry -allowdotfiles -insecure
+  port="${SERVER_PORT}"
   wait_for_url "http://127.0.0.1:${port}/hello.txt"
   expect_body "secret" "http://127.0.0.1:${port}/.hidden"
   if [[ "${SYMLINK_READY}" == "1" ]]; then
@@ -401,23 +442,38 @@ main() {
   stop_server
 
   log "testing basic auth"
-  port="$(start_server_retry -username "user" -password "pass")"
+  start_server_retry -username "user" -password "pass"
+  port="${SERVER_PORT}"
   wait_for_status "401" "http://127.0.0.1:${port}/hello.txt"
   expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "user:pass"
   stop_server
 
+  log "testing basic auth via env"
+  export GOWS_AUTH_USER="envuser"
+  export GOWS_AUTH_PASS="envpass"
+  start_server_retry -username "env:GOWS_AUTH_USER" -password "env:GOWS_AUTH_PASS"
+  port="${SERVER_PORT}"
+  wait_for_status "401" "http://127.0.0.1:${port}/hello.txt"
+  expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "envuser:envpass"
+  stop_server
+  unset GOWS_AUTH_USER
+  unset GOWS_AUTH_PASS
+
   log "testing allowed IPs"
-  port="$(start_server_retry -allowedips "10.0.0.1")"
+  start_server_retry -allowedips "10.0.0.1"
+  port="${SERVER_PORT}"
   wait_for_status "403" "http://127.0.0.1:${port}/hello.txt"
   stop_server
-  port="$(start_server_retry -allowedips "127.0.0.1")"
+  start_server_retry -allowedips "127.0.0.1"
+  port="${SERVER_PORT}"
   wait_for_url "http://127.0.0.1:${port}/hello.txt"
   expect_body "hello" "http://127.0.0.1:${port}/hello.txt"
   stop_server
 
   log "testing TLS"
   generate_certs
-  port="$(start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key")"
+  start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key"
+  port="${SERVER_PORT}"
   wait_for_url "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
   expect_body "hello" "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
   expect_listing_absent "server.pem" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
@@ -433,7 +489,8 @@ main() {
   stop_server
 
   log "testing mTLS"
-  port="$(start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key" -cacert "${TLS_DIR}/ca.pem" -mtls)"
+  start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key" -cacert "${TLS_DIR}/ca.pem" -mtls
+  port="${SERVER_PORT}"
   wait_for_url "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
   expect_curl_fail "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
   expect_body "hello" "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
