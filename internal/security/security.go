@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -93,7 +94,19 @@ func AuthCheck(r *http.Request, username, password string) bool {
 }
 
 func CleanRequestPath(urlPath string) (string, error) {
-	trimmed := strings.TrimPrefix(urlPath, "/")
+	decoded := urlPath
+	for i := 0; i < 2; i++ {
+		unescaped, err := url.PathUnescape(decoded)
+		if err != nil {
+			return "", fmt.Errorf("invalid path escape")
+		}
+		if unescaped == decoded {
+			break
+		}
+		decoded = unescaped
+	}
+
+	trimmed := strings.TrimPrefix(decoded, "/")
 	cleaned := path.Clean(trimmed)
 	if cleaned == "." {
 		return "", nil
@@ -169,6 +182,10 @@ func checkHardLink(root string, relPath string) error {
 			return nil
 		}
 		return err
+	}
+
+	if !fileInfo.Mode().IsRegular() {
+		return nil
 	}
 
 	if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {

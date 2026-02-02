@@ -71,6 +71,8 @@ func main() {
 		Headers:       cfg.Headers,
 		Redirects:     cfg.Redirects,
 		FilterGlobs:   cfg.FilterGlobs,
+		RequestChecks: security.DefaultRequestChecks(),
+		EntryFilters:  security.DefaultEntryFilters(),
 		Logger:        logger,
 	}
 

@@ -282,26 +282,27 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 		return
 	}
 
+	filters := h.EntryFilters
+	if len(filters) == 0 {
+		filters = security.DefaultEntryFilters()
+	}
 	listing := make([]dirEntry, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == ".htaccess" {
-			continue
-		}
 		entryRel := name
 		if relPath != "" {
 			entryRel = path.Join(relPath, name)
 		}
-		if h.isFilteredEntry(entryRel, name) {
-			continue
+		entryCtx := security.EntryContext{
+			Dir:           h.Dir,
+			RelPath:       entryRel,
+			Name:          name,
+			AllowDotFiles: h.AllowDotFiles,
+			Sensitive:     h.Sensitive,
+			BlockTLSFiles: h.BlockTLSFiles,
+			FilterGlobs:   h.FilterGlobs,
 		}
-		if security.IsSensitivePath(h.Dir, entryRel, h.Sensitive) {
-			continue
-		}
-		if h.BlockTLSFiles && security.IsLikelyTLSFile(entryRel) {
-			continue
-		}
-		if !h.AllowDotFiles && strings.HasPrefix(name, ".") {
+		if !security.ApplyEntryFilters(filters, &entryCtx) {
 			continue
 		}
 		info, err := entry.Info()
@@ -382,51 +383,4 @@ func formatBytes(size int64) string {
 	}
 
 	return fmt.Sprintf("%.0f PB", value)
-}
-
-func (h *Handler) isFilteredEntry(relPath string, name string) bool {
-	if len(h.FilterGlobs) == 0 {
-		return false
-	}
-	for _, raw := range h.FilterGlobs {
-		pattern := normalizeGlobPattern(raw)
-		if pattern == "" {
-			continue
-		}
-		if globMatch(pattern, relPath) || globMatch(pattern, name) {
-			return true
-		}
-	}
-	return false
-}
-
-func (h *Handler) isFilteredPath(relPath string) bool {
-	if relPath == "" {
-		return false
-	}
-	name := path.Base(relPath)
-	if name == "." || name == "/" {
-		name = ""
-	}
-	return h.isFilteredEntry(relPath, name)
-}
-
-func normalizeGlobPattern(pattern string) string {
-	trimmed := strings.TrimSpace(pattern)
-	if trimmed == "" {
-		return ""
-	}
-	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
-	if strings.HasSuffix(trimmed, "/") && trimmed != "/" {
-		trimmed = strings.TrimSuffix(trimmed, "/")
-	}
-	return trimmed
-}
-
-func globMatch(pattern string, target string) bool {
-	matched, err := path.Match(pattern, target)
-	if err != nil {
-		return false
-	}
-	return matched
 }

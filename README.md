@@ -157,6 +157,7 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * gows blocks hardlinks by default (use `-insecure` to bypass).
 * By default gows will not allow access to dot files (use `-allowdotfiles` to allow them)
 * If a `.htaccess` file is present, it is never served to clients, even with `-insecure` or `-allowdotfiles`
+* Requests for `.htaccess`, sensitive TLS files, or blocked TLS extensions return 404 (including `.htaccess` parse errors)
 * If `-cacert`/`-cert`/`-key` files are within (or symlink into) the served directory, gows will never list or serve those files
 * When TLS files live in the served directory, gows also blocks common TLS extensions (`.pem`, `.key`, `.crt`, `.cer`, `.p12`, `.pfx`) from listing or download
 * gows will look for an index.html file, if it isn't found, it will serve the entire directory.

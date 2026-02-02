@@ -22,55 +22,32 @@ type Handler struct {
 	Headers       map[string]string
 	Redirects     map[string]string
 	FilterGlobs   []string
+	RequestChecks []security.RequestCheck
+	EntryFilters  []security.EntryFilter
 	Logger        *log.Logger
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := logging.NewResponseWriter(w)
 
-	if h.AllowedIPs.Enabled() {
-		if !h.AllowedIPs.Allowed(r.RemoteAddr) {
-			h.logAndReturnError(rw, r, false, "403 forbidden", http.StatusForbidden)
-			return
-		}
+	ctx := security.RequestContext{
+		Req:           r,
+		Dir:           h.Dir,
+		AllowInsecure: h.AllowInsecure,
+		AllowDotFiles: h.AllowDotFiles,
+		AllowedIPs:    h.AllowedIPs,
+		Sensitive:     h.Sensitive,
+		BlockTLSFiles: h.BlockTLSFiles,
+		FilterGlobs:   h.FilterGlobs,
+		Username:      h.Username,
+		Password:      h.Password,
 	}
-
-	relPath, err := security.CleanRequestPath(r.URL.Path)
-	if err != nil {
-		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
-		return
+	checks := h.RequestChecks
+	if len(checks) == 0 {
+		checks = security.DefaultRequestChecks()
 	}
-
-	if security.IsSensitivePath(h.Dir, relPath, h.Sensitive) {
-		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
-		return
-	}
-
-	if h.isFilteredPath(relPath) {
-		h.logAndReturnError(rw, r, true, "404 not found", http.StatusNotFound)
-		return
-	}
-
-	if h.BlockTLSFiles && security.IsLikelyTLSFile(relPath) {
-		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
-		return
-	}
-
-	username := h.Username
-	password := h.Password
-	htCreds, htFound, err := security.LoadHtaccessCredentials(h.Dir, relPath, h.AllowInsecure)
-	if err != nil {
-		h.logAndReturnError(rw, r, true, "500 internal server error", http.StatusInternalServerError)
-		return
-	}
-	if htFound {
-		username = htCreds.Username
-		password = htCreds.Password
-	}
-
-	ac := security.AuthCheck(r, username, password)
-	if !ac {
-		h.logAndReturnError(rw, r, ac, "401 unauthorized", http.StatusUnauthorized)
+	if result := security.RunRequestChecks(checks, &ctx); result != nil {
+		h.logAndReturnError(rw, r, result.Auth, result.Public, result.Status)
 		return
 	}
 
@@ -80,15 +57,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !security.IsRequestAuthorized(h.Dir, relPath, h.AllowInsecure, h.AllowDotFiles) {
-		h.logAndReturnError(rw, r, ac, "403 forbidden", http.StatusForbidden)
-		return
-	}
-
-	fullPath := filepath.Join(h.Dir, filepath.FromSlash(relPath))
+	fullPath := filepath.Join(h.Dir, filepath.FromSlash(ctx.RelPath))
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		h.logAndReturnError(rw, r, ac, "404 not found", http.StatusNotFound)
+		h.logAndReturnError(rw, r, ctx.Authed, "404 not found", http.StatusNotFound)
 		return
 	}
 
@@ -103,7 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
 			return
 		}
-		h.serveDir(rw, r, fullPath, relPath, ac)
+		h.serveDir(rw, r, fullPath, ctx.RelPath, ctx.Authed)
 		return
 	}
 

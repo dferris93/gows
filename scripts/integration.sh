@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP_DIR="$(mktemp -d)"
+SITE_DIR="$TMP_DIR/site"
+TLS_DIR="$SITE_DIR/tls"
+LOG_FILE="$TMP_DIR/gows.log"
+BIN_PATH="${BIN_PATH:-$TMP_DIR/gows}"
+PID_FILE="${PID_FILE:-/tmp/gows-integration.pid}"
+SERVER_PID=""
+
+cleanup() {
+  stop_server
+  cleanup_stale_pid
+  if [[ -f "${PID_FILE}" ]]; then
+    rm -f "${PID_FILE}"
+  fi
+  if [[ "${KEEP_TMP:-0}" != "1" ]]; then
+    rm -rf "${TMP_DIR}"
+  fi
+}
+trap cleanup EXIT
+
+log() {
+  echo "==> $*"
+}
+
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+build_binary() {
+  log "building gows"
+  (cd "${ROOT_DIR}" && go build -o "${BIN_PATH}" .)
+}
+
+setup_site() {
+  mkdir -p "${SITE_DIR}/protected"
+  mkdir -p "${SITE_DIR}/broken"
+  mkdir -p "${TMP_DIR}/outside"
+  echo "hello" >"${SITE_DIR}/hello.txt"
+  echo "secret" >"${SITE_DIR}/.hidden"
+  echo "log" >"${SITE_DIR}/app.log"
+  echo "hardlink" >"${SITE_DIR}/hardlink-source.txt"
+  echo "protected" >"${SITE_DIR}/protected/secret.txt"
+  echo "broken" >"${SITE_DIR}/broken/file.txt"
+  cat >"${SITE_DIR}/protected/.htaccess" <<'EOF'
+username: ht
+password: pass
+EOF
+  cat >"${SITE_DIR}/broken/.htaccess" <<'EOF'
+username: only
+EOF
+  echo "outside" >"${TMP_DIR}/outside/secret.txt"
+  if ln -s "${TMP_DIR}/outside/secret.txt" "${SITE_DIR}/escape.txt" 2>/dev/null; then
+    SYMLINK_READY=1
+  else
+    SYMLINK_READY=0
+  fi
+  if ln "${SITE_DIR}/hardlink-source.txt" "${SITE_DIR}/hardlink.txt" 2>/dev/null; then
+    HARDLINK_READY=1
+  else
+    HARDLINK_READY=0
+  fi
+}
+
+generate_certs() {
+  mkdir -p "${TLS_DIR}"
+
+  cat >"${TMP_DIR}/server.cnf" <<'EOF'
+[ req ]
+distinguished_name = dn
+req_extensions = req_ext
+prompt = no
+
+[ dn ]
+CN = 127.0.0.1
+
+[ req_ext ]
+subjectAltName = @alt_names
+extendedKeyUsage = serverAuth
+
+[ alt_names ]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+EOF
+
+  cat >"${TMP_DIR}/client.cnf" <<'EOF'
+[ req ]
+distinguished_name = dn
+req_extensions = req_ext
+prompt = no
+
+[ dn ]
+CN = gows test client
+
+[ req_ext ]
+extendedKeyUsage = clientAuth
+EOF
+
+  openssl genrsa -out "${TLS_DIR}/ca.key" 2048 >/dev/null 2>&1
+  openssl req -x509 -new -nodes -key "${TLS_DIR}/ca.key" -sha256 -days 1 \
+    -subj "/CN=gows test ca" -out "${TLS_DIR}/ca.pem" >/dev/null 2>&1
+
+  openssl genrsa -out "${TLS_DIR}/server.key" 2048 >/dev/null 2>&1
+  openssl req -new -key "${TLS_DIR}/server.key" -out "${TLS_DIR}/server.csr" \
+    -config "${TMP_DIR}/server.cnf" >/dev/null 2>&1
+  openssl x509 -req -in "${TLS_DIR}/server.csr" -CA "${TLS_DIR}/ca.pem" \
+    -CAkey "${TLS_DIR}/ca.key" -CAcreateserial -out "${TLS_DIR}/server.pem" \
+    -days 1 -sha256 -extfile "${TMP_DIR}/server.cnf" -extensions req_ext >/dev/null 2>&1
+
+  openssl genrsa -out "${TLS_DIR}/client.key" 2048 >/dev/null 2>&1
+  openssl req -new -key "${TLS_DIR}/client.key" -out "${TLS_DIR}/client.csr" \
+    -config "${TMP_DIR}/client.cnf" >/dev/null 2>&1
+  openssl x509 -req -in "${TLS_DIR}/client.csr" -CA "${TLS_DIR}/ca.pem" \
+    -CAkey "${TLS_DIR}/ca.key" -CAcreateserial -out "${TLS_DIR}/client.pem" \
+    -days 1 -sha256 -extfile "${TMP_DIR}/client.cnf" -extensions req_ext >/dev/null 2>&1
+}
+
+pick_port() {
+  for _ in {1..20}; do
+    PORT="$((RANDOM % 10000 + 40000))"
+    if command -v lsof >/dev/null 2>&1; then
+      if ! lsof -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "${PORT}"
+        return
+      fi
+    else
+      echo "${PORT}"
+      return
+    fi
+  done
+  fail "unable to pick a free port"
+}
+
+start_server() {
+  local port="$1"
+  shift
+  GOWS_INTEGRATION=1 "${BIN_PATH}" -ip 127.0.0.1 -port "${port}" -dir "${SITE_DIR}" "$@" >"${LOG_FILE}" 2>&1 &
+  SERVER_PID="$!"
+  echo "${SERVER_PID}" >"${PID_FILE}"
+}
+
+start_server_retry() {
+  local attempts=20
+  local port
+  for _ in $(seq 1 "${attempts}"); do
+    port="$(pick_port)"
+    start_server "${port}" "$@"
+    sleep 0.1
+    if kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
+      echo "${port}"
+      return 0
+    fi
+    if grep -qi "address already in use" "${LOG_FILE}"; then
+      stop_server
+      continue
+    fi
+    fail "server failed to start on port ${port}. Logs:\n$(cat "${LOG_FILE}")"
+  done
+  fail "unable to start server after ${attempts} attempts"
+}
+
+stop_server() {
+  if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
+    kill "${SERVER_PID}" >/dev/null 2>&1 || true
+    wait "${SERVER_PID}" >/dev/null 2>&1 || true
+  fi
+  SERVER_PID=""
+  if [[ -f "${PID_FILE}" ]]; then
+    rm -f "${PID_FILE}"
+  fi
+}
+
+wait_for_url() {
+  local url="$1"
+  shift
+  local deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)); do
+    if curl --fail --silent --show-error --connect-timeout 1 "$@" "${url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail "server did not become ready for ${url}. Logs:\n$(cat "${LOG_FILE}")"
+}
+
+expect_status() {
+  local expected="$1"
+  local url="$2"
+  shift 2
+  local code
+  code="$(curl --silent --output /dev/null --write-out "%{http_code}" "$@" "${url}" || true)"
+  if [[ -z "${code}" || "${code}" == "000" ]]; then
+    fail "request failed for ${url}"
+  fi
+  if [[ "${code}" != "${expected}" ]]; then
+    fail "expected HTTP ${expected} for ${url}, got ${code}"
+  fi
+}
+
+wait_for_status() {
+  local expected="$1"
+  local url="$2"
+  shift 2
+  local deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)); do
+    local code
+    code="$(curl --silent --output /dev/null --write-out "%{http_code}" "$@" "${url}" || true)"
+    if [[ "${code}" == "${expected}" ]]; then
+      return 0
+    fi
+    if ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail "server did not return ${expected} for ${url}. Logs:\n$(cat "${LOG_FILE}")"
+}
+
+expect_body() {
+  local expected="$1"
+  local url="$2"
+  shift 2
+  local body
+  body="$(curl --fail --silent --show-error "$@" "${url}" || true)"
+  if [[ -z "${body}" && "${expected}" != "" ]]; then
+    fail "request failed for ${url}"
+  fi
+  if [[ "${body}" != "${expected}" ]]; then
+    fail "unexpected body for ${url}: ${body}"
+  fi
+}
+
+expect_header() {
+  local header="$1"
+  local expected="$2"
+  local url="$3"
+  shift 3
+  local headers
+  headers="$(curl --silent --show-error --dump-header - --output /dev/null "$@" "${url}" 2>/dev/null || true)"
+  if [[ -z "${headers}" ]]; then
+    fail "request failed for ${url}"
+  fi
+  local value
+  value="$(printf "%s" "${headers}" | awk -F': ' -v h="${header}" 'tolower($1)==tolower(h){print $2}' | tr -d '\r')"
+  if [[ "${value}" != "${expected}" ]]; then
+    fail "expected header ${header}: ${expected} for ${url}, got ${value}"
+  fi
+}
+
+expect_no_header() {
+  local header="$1"
+  local url="$2"
+  shift 2
+  local headers
+  headers="$(curl --silent --show-error --dump-header - --output /dev/null "$@" "${url}" 2>/dev/null || true)"
+  if [[ -z "${headers}" ]]; then
+    fail "request failed for ${url}"
+  fi
+  local value
+  value="$(printf "%s" "${headers}" | awk -F': ' -v h="${header}" 'tolower($1)==tolower(h){print $2}' | tr -d '\r')"
+  if [[ -n "${value}" ]]; then
+    fail "expected header ${header} to be absent for ${url}, got ${value}"
+  fi
+}
+
+expect_location() {
+  local expected="$1"
+  local url="$2"
+  shift 2
+  local headers
+  headers="$(curl --silent --show-error --dump-header - --output /dev/null "$@" "${url}" 2>/dev/null || true)"
+  if [[ -z "${headers}" ]]; then
+    fail "request failed for ${url}"
+  fi
+  local value
+  value="$(printf "%s" "${headers}" | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\r')"
+  if [[ "${value}" != "${expected}" ]]; then
+    fail "expected Location ${expected} for ${url}, got ${value}"
+  fi
+}
+
+expect_listing_contains() {
+  local expected="$1"
+  local url="$2"
+  shift 2
+  local body
+  body="$(curl --fail --silent --show-error "$@" "${url}" || true)"
+  if [[ -z "${body}" ]]; then
+    fail "request failed for ${url}"
+  fi
+  if [[ "${body}" != *"${expected}"* ]]; then
+    fail "expected listing to contain ${expected}"
+  fi
+}
+
+expect_listing_absent() {
+  local forbidden="$1"
+  local url="$2"
+  shift 2
+  local body
+  body="$(curl --fail --silent --show-error "$@" "${url}" || true)"
+  if [[ -z "${body}" ]]; then
+    fail "request failed for ${url}"
+  fi
+  if [[ "${body}" == *"${forbidden}"* ]]; then
+    fail "expected listing to omit ${forbidden}"
+  fi
+}
+
+expect_curl_fail() {
+  local url="$1"
+  shift
+  if curl --fail --silent --show-error "$@" "${url}" >/dev/null 2>&1; then
+    fail "expected curl to fail for ${url}"
+  fi
+}
+
+cleanup_stale_pid() {
+  if [[ ! -f "${PID_FILE}" ]]; then
+    return
+  fi
+  local pid
+  pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+  if [[ -z "${pid}" ]]; then
+    rm -f "${PID_FILE}"
+    return
+  fi
+  if [[ ! -d "/proc/${pid}" ]]; then
+    rm -f "${PID_FILE}"
+    return
+  fi
+  if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -q "GOWS_INTEGRATION=1"; then
+    kill "${pid}" >/dev/null 2>&1 || true
+    rm -f "${PID_FILE}"
+  fi
+}
+
+main() {
+  require_cmd go
+  require_cmd curl
+  require_cmd openssl
+  cleanup_stale_pid
+
+  setup_site
+  if [[ ! -x "${BIN_PATH}" ]]; then
+    build_binary
+  fi
+
+  log "testing HTTP"
+  local port
+  port="$(start_server_retry -filter "*.log" -redirect "/r:https://example.com" -header "X-Test: ok")"
+  wait_for_url "http://127.0.0.1:${port}/hello.txt"
+  expect_body "hello" "http://127.0.0.1:${port}/hello.txt"
+  expect_header "X-Test" "ok" "http://127.0.0.1:${port}/hello.txt"
+  expect_no_header "X-Test" "http://127.0.0.1:${port}/missing.txt"
+  expect_listing_contains "hello.txt" "http://127.0.0.1:${port}/"
+  expect_listing_absent "app.log" "http://127.0.0.1:${port}/"
+  expect_listing_absent ".htaccess" "http://127.0.0.1:${port}/"
+  expect_listing_absent ".hidden" "http://127.0.0.1:${port}/"
+  expect_status "403" "http://127.0.0.1:${port}/.hidden"
+  expect_status "401" "http://127.0.0.1:${port}/protected/secret.txt"
+  expect_body "protected" "http://127.0.0.1:${port}/protected/secret.txt" -u "ht:pass"
+  expect_status "404" "http://127.0.0.1:${port}/protected/.htaccess"
+  expect_status "404" "http://127.0.0.1:${port}/broken/file.txt"
+  expect_status "404" "http://127.0.0.1:${port}/app.log"
+  expect_status "403" "http://127.0.0.1:${port}/../hello.txt" --path-as-is
+  expect_status "403" "http://127.0.0.1:${port}/%2e%2e/hello.txt" --path-as-is
+  expect_status "403" "http://127.0.0.1:${port}/%252e%252e/hello.txt" --path-as-is
+  expect_status "302" "http://127.0.0.1:${port}/r"
+  expect_location "https://example.com" "http://127.0.0.1:${port}/r"
+  if [[ "${SYMLINK_READY}" == "1" ]]; then
+    expect_status "403" "http://127.0.0.1:${port}/escape.txt"
+  fi
+  if [[ "${HARDLINK_READY}" == "1" ]]; then
+    expect_status "403" "http://127.0.0.1:${port}/hardlink.txt"
+  fi
+  stop_server
+
+  log "testing HTTP allowdotfiles + insecure"
+  port="$(start_server_retry -allowdotfiles -insecure)"
+  wait_for_url "http://127.0.0.1:${port}/hello.txt"
+  expect_body "secret" "http://127.0.0.1:${port}/.hidden"
+  if [[ "${SYMLINK_READY}" == "1" ]]; then
+    expect_body "outside" "http://127.0.0.1:${port}/escape.txt"
+  fi
+  if [[ "${HARDLINK_READY}" == "1" ]]; then
+    expect_body "hardlink" "http://127.0.0.1:${port}/hardlink.txt"
+  fi
+  stop_server
+
+  log "testing basic auth"
+  port="$(start_server_retry -username "user" -password "pass")"
+  wait_for_status "401" "http://127.0.0.1:${port}/hello.txt"
+  expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "user:pass"
+  stop_server
+
+  log "testing allowed IPs"
+  port="$(start_server_retry -allowedips "10.0.0.1")"
+  wait_for_status "403" "http://127.0.0.1:${port}/hello.txt"
+  stop_server
+  port="$(start_server_retry -allowedips "127.0.0.1")"
+  wait_for_url "http://127.0.0.1:${port}/hello.txt"
+  expect_body "hello" "http://127.0.0.1:${port}/hello.txt"
+  stop_server
+
+  log "testing TLS"
+  generate_certs
+  port="$(start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key")"
+  wait_for_url "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
+  expect_body "hello" "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
+  expect_listing_absent "server.pem" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
+  expect_listing_absent "server.key" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
+  expect_listing_absent "ca.pem" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
+  expect_listing_absent "client.pem" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
+  expect_listing_absent "client.key" "https://127.0.0.1:${port}/tls/" --cacert "${TLS_DIR}/ca.pem"
+  expect_status "404" "https://127.0.0.1:${port}/tls/server.pem" --cacert "${TLS_DIR}/ca.pem"
+  expect_status "404" "https://127.0.0.1:${port}/tls/server.key" --cacert "${TLS_DIR}/ca.pem"
+  expect_status "404" "https://127.0.0.1:${port}/tls/ca.pem" --cacert "${TLS_DIR}/ca.pem"
+  expect_status "404" "https://127.0.0.1:${port}/tls/client.pem" --cacert "${TLS_DIR}/ca.pem"
+  expect_status "404" "https://127.0.0.1:${port}/tls/client.key" --cacert "${TLS_DIR}/ca.pem"
+  stop_server
+
+  log "testing mTLS"
+  port="$(start_server_retry -cert "${TLS_DIR}/server.pem" -key "${TLS_DIR}/server.key" -cacert "${TLS_DIR}/ca.pem" -mtls)"
+  wait_for_url "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
+  expect_curl_fail "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem"
+  expect_body "hello" "https://127.0.0.1:${port}/hello.txt" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
+  expect_status "404" "https://127.0.0.1:${port}/tls/server.pem" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
+  expect_status "404" "https://127.0.0.1:${port}/tls/server.key" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
+  expect_status "404" "https://127.0.0.1:${port}/tls/ca.pem" --cacert "${TLS_DIR}/ca.pem" --cert "${TLS_DIR}/client.pem" --key "${TLS_DIR}/client.key"
+  stop_server
+
+  log "integration checks passed"
+}
+
+main "$@"
