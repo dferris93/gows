@@ -299,8 +299,6 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 			Name:          name,
 			AllowDotFiles: h.AllowDotFiles,
 			Sensitive:     h.Sensitive,
-			BlockTLSFiles: h.BlockTLSFiles,
-			TLSInodes:     h.TLSInodes,
 			FilterGlobs:   h.FilterGlobs,
 		}
 		if !security.ApplyEntryFilters(filters, &entryCtx) {

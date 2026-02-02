@@ -67,6 +67,11 @@ func splitCommaList(value string) []string {
 func Parse() (Config, error) {
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
+		fmt.Fprintln(out, "serv is a lightweight HTTP/HTTPS file server for sharing a directory.")
+		fmt.Fprintln(out, "It supports TLS/mTLS, basic auth with .htaccess overrides, IP allowlists,")
+		fmt.Fprintln(out, "custom headers/redirects, and a custom directory listing with")
+		fmt.Fprintln(out, "secure-by-default file access.")
+		fmt.Fprintln(out, "")
 		fmt.Fprintf(out, "Usage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 		fmt.Fprintln(out, "")

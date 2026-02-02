@@ -46,104 +46,17 @@ func TestSensitivePathReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestTLSFilesReturnNotFound(t *testing.T) {
+func TestTLSFilesAllowedWhenNotSensitive(t *testing.T) {
 	dir := t.TempDir()
 	req := httptest.NewRequest(http.MethodGet, "/server.key", nil)
 	ctx := RequestContext{
-		Req:           req,
-		Dir:           dir,
-		BlockTLSFiles: true,
+		Req: req,
+		Dir: dir,
 	}
 
 	result := runDefaultChecks(t, &ctx)
-	if result == nil {
-		t.Fatalf("expected not found result")
-	}
-	if result.Status != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", result.Status)
-	}
-	if result.Public != "404 not found" {
-		t.Fatalf("expected public message to be 404 not found, got %q", result.Public)
-	}
-	if !result.Auth {
-		t.Fatalf("expected auth true for not found response")
-	}
-}
-
-func TestTLSFileSymlinkReturnNotFound(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink test is unreliable on Windows")
-	}
-	dir := t.TempDir()
-	target := filepath.Join(dir, "server.key")
-	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
-		t.Fatalf("write tls file: %v", err)
-	}
-	link := filepath.Join(dir, "alias.txt")
-	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("symlink not supported: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/alias.txt", nil)
-	ctx := RequestContext{
-		Req:           req,
-		Dir:           dir,
-		BlockTLSFiles: true,
-		AllowInsecure: true,
-	}
-
-	result := runDefaultChecks(t, &ctx)
-	if result == nil {
-		t.Fatalf("expected not found result")
-	}
-	if result.Status != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", result.Status)
-	}
-	if result.Public != "404 not found" {
-		t.Fatalf("expected public message to be 404 not found, got %q", result.Public)
-	}
-	if !result.Auth {
-		t.Fatalf("expected auth true for not found response")
-	}
-}
-
-func TestTLSFileHardlinkReturnNotFound(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("hardlink test is unreliable on Windows")
-	}
-	dir := t.TempDir()
-	target := filepath.Join(dir, "server.key")
-	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
-		t.Fatalf("write tls file: %v", err)
-	}
-	link := filepath.Join(dir, "alias.txt")
-	if err := os.Link(target, link); err != nil {
-		t.Skipf("hardlink not supported: %v", err)
-	}
-	tlsInodes, err := BuildTLSInodeIndex(dir)
-	if err != nil {
-		t.Fatalf("build tls inode index: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/alias.txt", nil)
-	ctx := RequestContext{
-		Req:           req,
-		Dir:           dir,
-		BlockTLSFiles: true,
-		TLSInodes:     tlsInodes,
-		AllowInsecure: true,
-	}
-
-	result := runDefaultChecks(t, &ctx)
-	if result == nil {
-		t.Fatalf("expected not found result")
-	}
-	if result.Status != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", result.Status)
-	}
-	if result.Public != "404 not found" {
-		t.Fatalf("expected public message to be 404 not found, got %q", result.Public)
-	}
-	if !result.Auth {
-		t.Fatalf("expected auth true for not found response")
+	if result != nil {
+		t.Fatalf("expected request to pass, got status %d", result.Status)
 	}
 }
 
@@ -267,11 +180,24 @@ func TestCleanPathPrecedesAuth(t *testing.T) {
 }
 
 func TestAuthPrecedesRequestAuthorization(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/.secret", nil)
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink test is unreliable on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	shared := filepath.Join(dir, "shared.txt")
+	if err := os.Link(target, shared); err != nil {
+		t.Skipf("hardlink not supported: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/shared.txt", nil)
 	req.SetBasicAuth("bad", "creds")
 	ctx := RequestContext{
 		Req:      req,
-		Dir:      t.TempDir(),
+		Dir:      dir,
 		Username: "user",
 		Password: "pass",
 	}

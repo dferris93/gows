@@ -16,8 +16,6 @@ type Handler struct {
 	AllowDotFiles bool
 	AllowedIPs    security.IPChecker
 	Sensitive     []security.SensitiveFile
-	BlockTLSFiles bool
-	TLSInodes     security.TLSInodeIndex
 	Username      string
 	Password      string
 	Headers       map[string]string
@@ -38,8 +36,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AllowDotFiles: h.AllowDotFiles,
 		AllowedIPs:    h.AllowedIPs,
 		Sensitive:     h.Sensitive,
-		BlockTLSFiles: h.BlockTLSFiles,
-		TLSInodes:     h.TLSInodes,
 		FilterGlobs:   h.FilterGlobs,
 		Username:      h.Username,
 		Password:      h.Password,

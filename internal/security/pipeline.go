@@ -13,8 +13,6 @@ type RequestContext struct {
 	AllowDotFiles bool
 	AllowedIPs    IPChecker
 	Sensitive     []SensitiveFile
-	BlockTLSFiles bool
-	TLSInodes     TLSInodeIndex
 	FilterGlobs   []string
 	Username      string
 	Password      string
@@ -35,8 +33,6 @@ type EntryContext struct {
 	Name          string
 	AllowDotFiles bool
 	Sensitive     []SensitiveFile
-	BlockTLSFiles bool
-	TLSInodes     TLSInodeIndex
 	FilterGlobs   []string
 }
 
@@ -49,7 +45,7 @@ func DefaultRequestChecks() []RequestCheck {
 		CheckHtaccessPath,
 		CheckSensitivePath,
 		CheckFilteredPath,
-		CheckTLSFiles,
+		CheckDotFiles,
 		CheckHtaccess,
 		CheckAuth,
 		CheckRequestAuthorized,
@@ -61,7 +57,6 @@ func DefaultEntryFilters() []EntryFilter {
 		FilterHtaccess,
 		FilterEntryGlobs,
 		FilterSensitive,
-		FilterTLSFiles,
 		FilterDotFiles,
 	}
 }
@@ -133,8 +128,11 @@ func CheckFilteredPath(ctx *RequestContext) *CheckResult {
 	return nil
 }
 
-func CheckTLSFiles(ctx *RequestContext) *CheckResult {
-	if ctx.BlockTLSFiles && IsTLSFilePath(ctx.Dir, ctx.RelPath, ctx.TLSInodes) {
+func CheckDotFiles(ctx *RequestContext) *CheckResult {
+	if ctx.AllowDotFiles {
+		return nil
+	}
+	if IsDotFile(ctx.Dir, ctx.RelPath) != nil {
 		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
 	}
 	return nil
@@ -181,13 +179,6 @@ func FilterEntryGlobs(ctx *EntryContext) bool {
 
 func FilterSensitive(ctx *EntryContext) bool {
 	return !IsSensitivePath(ctx.Dir, ctx.RelPath, ctx.Sensitive)
-}
-
-func FilterTLSFiles(ctx *EntryContext) bool {
-	if ctx.BlockTLSFiles && IsTLSFilePath(ctx.Dir, ctx.RelPath, ctx.TLSInodes) {
-		return false
-	}
-	return true
 }
 
 func FilterDotFiles(ctx *EntryContext) bool {

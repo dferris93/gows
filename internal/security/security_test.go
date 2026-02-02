@@ -193,27 +193,6 @@ func httptestRequest(t *testing.T, user, pass string) *http.Request {
 	return req
 }
 
-func TestIsLikelyTLSFile(t *testing.T) {
-	cases := []struct {
-		name   string
-		expect bool
-	}{
-		{"server.pem", true},
-		{"server.key", true},
-		{"server.crt", true},
-		{"server.cer", true},
-		{"server.p12", true},
-		{"server.pfx", true},
-		{"notes.txt", false},
-		{"", false},
-	}
-	for _, tc := range cases {
-		if got := IsLikelyTLSFile(tc.name); got != tc.expect {
-			t.Fatalf("IsLikelyTLSFile(%q)=%v expected %v", tc.name, got, tc.expect)
-		}
-	}
-}
-
 func TestSplitKeyValue(t *testing.T) {
 	key, value := splitKeyValue("username: admin")
 	if key != "username" || value != "admin" {

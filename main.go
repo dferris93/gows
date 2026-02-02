@@ -50,21 +50,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	blockTLSFiles, err := security.ShouldBlockTLSFiles(dir, []string{cfg.CACertFile, cfg.CertFile, cfg.KeyFile})
-	if err != nil {
-		log.Printf("Error configuring TLS file blocking: %v", err)
-		os.Exit(1)
-	}
-
-	var tlsInodes security.TLSInodeIndex
-	if blockTLSFiles {
-		tlsInodes, err = security.BuildTLSInodeIndex(dir)
-		if err != nil {
-			log.Printf("Error indexing TLS files: %v", err)
-			os.Exit(1)
-		}
-	}
-
 	username := resolveEnvValue(logger, "username", cfg.Username, false)
 	password := resolveEnvValue(logger, "password", cfg.Password, true)
 
@@ -74,8 +59,6 @@ func main() {
 		AllowDotFiles: cfg.AllowDotFiles,
 		AllowedIPs:    ipChecker,
 		Sensitive:     sensitiveFiles,
-		BlockTLSFiles: blockTLSFiles,
-		TLSInodes:     tlsInodes,
 		Username:      username,
 		Password:      password,
 		Headers:       cfg.Headers,
