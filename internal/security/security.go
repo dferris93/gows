@@ -2,6 +2,7 @@ package security
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -219,6 +220,109 @@ func IsRequestAuthorized(dir, relPath string, allowInsecure, allowDotFiles bool)
 	return true
 }
 
+type SensitiveFile struct {
+	Path string
+	Info os.FileInfo
+}
+
+func ResolveSensitiveFiles(files []string) ([]SensitiveFile, error) {
+	seen := make(map[string]struct{})
+	out := make([]SensitiveFile, 0, len(files))
+
+	for _, file := range files {
+		if strings.TrimSpace(file) == "" {
+			continue
+		}
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			resolved = abs
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[resolved]; ok {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		out = append(out, SensitiveFile{Path: resolved, Info: info})
+	}
+
+	return out, nil
+}
+
+func IsSensitivePath(root, relPath string, sensitive []SensitiveFile) bool {
+	if relPath == "" || len(sensitive) == 0 {
+		return false
+	}
+
+	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return false
+	}
+
+	resolved, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		resolved = fullPath
+	}
+
+	for _, file := range sensitive {
+		if resolved == file.Path {
+			return true
+		}
+		if file.Info != nil && os.SameFile(info, file.Info) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func IsLikelyTLSFile(relPath string) bool {
+	if relPath == "" {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(relPath))
+	switch filepath.Ext(name) {
+	case ".pem", ".key", ".crt", ".cer", ".p12", ".pfx":
+		return true
+	default:
+		return false
+	}
+}
+
+func ShouldBlockTLSFiles(root string, files []string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+
+	separator := string(filepath.Separator)
+	for _, file := range files {
+		if strings.TrimSpace(file) == "" {
+			continue
+		}
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			return false, err
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			resolved = abs
+		}
+		if resolved == rootAbs || strings.HasPrefix(resolved, rootAbs+separator) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func LoadHtaccessCredentials(root, relPath string, allowInsecure bool) (HtaccessCredentials, bool, error) {
 	startDir := relPath
 	dir := startDir
@@ -250,7 +354,7 @@ func LoadHtaccessCredentials(root, relPath string, allowInsecure bool) (Htaccess
 			}
 			return creds, true, nil
 		}
-		if err != nil && !os.IsNotExist(err) {
+		if err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTDIR) {
 			return HtaccessCredentials{}, true, err
 		}
 

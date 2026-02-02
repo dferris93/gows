@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gows/internal/logging"
+	"gows/internal/security"
 )
 
 type dirEntry struct {
@@ -39,16 +40,20 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
   <title>{{.Title}}</title>
   <style>
     :root {
-      --bg: #edf1f5;
-      --window: #fbfbfc;
-      --border: #d6d9de;
-      --titlebar: linear-gradient(#f7f7f7, #e7eaee);
-      --text: #1b1f24;
-      --muted: #70757d;
-      --row: #ffffff;
-      --row-alt: #f6f8fa;
-      --row-hover: #e6f0ff;
-      --link: #0a5bd8;
+      --bg: #0c0f14;
+      --window: #151922;
+      --border: #272d39;
+      --titlebar: linear-gradient(#1b212d, #141a24);
+      --text: #e7ecf3;
+      --muted: #9aa4b2;
+      --row: #151a24;
+      --row-alt: #121722;
+      --row-hover: #1e2432;
+      --link: #c6b0ff;
+      --folder-top: #c9b6ff;
+      --folder-bottom: #7a57c6;
+      --file: #2a3140;
+      --file-fold: #3b4356;
     }
 
     * { box-sizing: border-box; }
@@ -56,7 +61,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
     body {
       margin: 0;
       font-family: "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      background: radial-gradient(circle at top, #f8fafc 0%, #edf1f5 55%, #e2e7ee 100%);
+      background: radial-gradient(circle at top, #1b2230 0%, #0c1016 55%, #07090d 100%);
       color: var(--text);
       min-height: 100vh;
       padding: 32px 18px 48px;
@@ -68,7 +73,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       border-radius: 14px;
       background: var(--window);
       border: 1px solid var(--border);
-      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.16), 0 6px 20px rgba(15, 23, 42, 0.08);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.35);
       overflow: hidden;
     }
 
@@ -96,7 +101,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       align-items: center;
       padding: 14px 18px;
       border-bottom: 1px solid var(--border);
-      background: #f4f6f9;
+      background: #121722;
     }
 
     .toolbar h1 {
@@ -124,7 +129,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       color: var(--muted);
       padding: 10px 18px;
       border-bottom: 1px solid var(--border);
-      background: #f8f9fb;
+      background: #111622;
     }
 
     tbody tr {
@@ -141,7 +146,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
 
     tbody td {
       padding: 10px 18px;
-      border-bottom: 1px solid #edf0f3;
+      border-bottom: 1px solid #202636;
       vertical-align: middle;
     }
 
@@ -155,8 +160,8 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       width: 18px;
       height: 14px;
       border-radius: 3px;
-      background: linear-gradient(180deg, #9cc2ff 0%, #5f90ff 100%);
-      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.15);
+      background: linear-gradient(180deg, var(--folder-top) 0%, var(--folder-bottom) 100%);
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
       flex-shrink: 0;
     }
 
@@ -164,9 +169,9 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       width: 14px;
       height: 16px;
       border-radius: 2px;
-      background: #e7eaee;
+      background: var(--file);
       position: relative;
-      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.1);
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
     }
 
     .icon.file::after {
@@ -174,7 +179,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       position: absolute;
       top: 0;
       right: 0;
-      border-top: 6px solid #c9ced6;
+      border-top: 6px solid var(--file-fold);
       border-left: 6px solid transparent;
     }
 
@@ -260,7 +265,7 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
 </body>
 </html>`))
 
-func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath string, ac bool) {
+func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath string, relPath string, ac bool) {
 	if !strings.HasSuffix(r.URL.Path, "/") {
 		target := r.URL.Path + "/"
 		if r.URL.RawQuery != "" {
@@ -279,15 +284,28 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 
 	listing := make([]dirEntry, 0, len(entries))
 	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
 		name := entry.Name()
 		if name == ".htaccess" {
 			continue
 		}
+		entryRel := name
+		if relPath != "" {
+			entryRel = path.Join(relPath, name)
+		}
+		if h.isFilteredEntry(entryRel, name) {
+			continue
+		}
+		if security.IsSensitivePath(h.Dir, entryRel, h.Sensitive) {
+			continue
+		}
+		if h.BlockTLSFiles && security.IsLikelyTLSFile(entryRel) {
+			continue
+		}
 		if !h.AllowDotFiles && strings.HasPrefix(name, ".") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
 			continue
 		}
 		href := path.Join(r.URL.Path, url.PathEscape(name))
@@ -364,4 +382,51 @@ func formatBytes(size int64) string {
 	}
 
 	return fmt.Sprintf("%.0f PB", value)
+}
+
+func (h *Handler) isFilteredEntry(relPath string, name string) bool {
+	if len(h.FilterGlobs) == 0 {
+		return false
+	}
+	for _, raw := range h.FilterGlobs {
+		pattern := normalizeGlobPattern(raw)
+		if pattern == "" {
+			continue
+		}
+		if globMatch(pattern, relPath) || globMatch(pattern, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) isFilteredPath(relPath string) bool {
+	if relPath == "" {
+		return false
+	}
+	name := path.Base(relPath)
+	if name == "." || name == "/" {
+		name = ""
+	}
+	return h.isFilteredEntry(relPath, name)
+}
+
+func normalizeGlobPattern(pattern string) string {
+	trimmed := strings.TrimSpace(pattern)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
+	if strings.HasSuffix(trimmed, "/") && trimmed != "/" {
+		trimmed = strings.TrimSuffix(trimmed, "/")
+	}
+	return trimmed
+}
+
+func globMatch(pattern string, target string) bool {
+	matched, err := path.Match(pattern, target)
+	if err != nil {
+		return false
+	}
+	return matched
 }

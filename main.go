@@ -44,6 +44,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	sensitiveFiles, err := security.ResolveSensitiveFiles([]string{cfg.CACertFile, cfg.CertFile, cfg.KeyFile})
+	if err != nil {
+		log.Printf("Error configuring sensitive TLS paths: %v", err)
+		os.Exit(1)
+	}
+
+	blockTLSFiles, err := security.ShouldBlockTLSFiles(dir, []string{cfg.CACertFile, cfg.CertFile, cfg.KeyFile})
+	if err != nil {
+		log.Printf("Error configuring TLS file blocking: %v", err)
+		os.Exit(1)
+	}
+
 	username := resolveEnvValue(logger, "username", cfg.Username, false)
 	password := resolveEnvValue(logger, "password", cfg.Password, true)
 
@@ -52,10 +64,13 @@ func main() {
 		AllowInsecure: cfg.AllowInsecure,
 		AllowDotFiles: cfg.AllowDotFiles,
 		AllowedIPs:    ipChecker,
+		Sensitive:     sensitiveFiles,
+		BlockTLSFiles: blockTLSFiles,
 		Username:      username,
 		Password:      password,
 		Headers:       cfg.Headers,
 		Redirects:     cfg.Redirects,
+		FilterGlobs:   cfg.FilterGlobs,
 		Logger:        logger,
 	}
 

@@ -15,10 +15,13 @@ type Handler struct {
 	AllowInsecure bool
 	AllowDotFiles bool
 	AllowedIPs    security.IPChecker
+	Sensitive     []security.SensitiveFile
+	BlockTLSFiles bool
 	Username      string
 	Password      string
 	Headers       map[string]string
 	Redirects     map[string]string
+	FilterGlobs   []string
 	Logger        *log.Logger
 }
 
@@ -34,6 +37,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	relPath, err := security.CleanRequestPath(r.URL.Path)
 	if err != nil {
+		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
+		return
+	}
+
+	if security.IsSensitivePath(h.Dir, relPath, h.Sensitive) {
+		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
+		return
+	}
+
+	if h.isFilteredPath(relPath) {
+		h.logAndReturnError(rw, r, true, "404 not found", http.StatusNotFound)
+		return
+	}
+
+	if h.BlockTLSFiles && security.IsLikelyTLSFile(relPath) {
 		h.logAndReturnError(rw, r, true, "403 forbidden", http.StatusForbidden)
 		return
 	}
@@ -85,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
 			return
 		}
-		h.serveDir(rw, r, fullPath, ac)
+		h.serveDir(rw, r, fullPath, relPath, ac)
 		return
 	}
 

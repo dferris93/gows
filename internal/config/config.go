@@ -24,6 +24,7 @@ type Config struct {
 	AllowedIPs     []string
 	Headers        map[string]string
 	Redirects      map[string]string
+	FilterGlobs    []string
 }
 
 type multiValueFlag []string
@@ -64,6 +65,18 @@ func splitCommaList(value string) []string {
 }
 
 func Parse() (Config, error) {
+	flag.CommandLine.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Htaccess:")
+		fmt.Fprintln(out, "  If a .htaccess file exists in a directory (or any parent up to the served root),")
+		fmt.Fprintln(out, "  its username/password override -username/-password for that subtree.")
+		fmt.Fprintln(out, "  Format supports username/password entries with ':' or '=' (e.g. username: admin).")
+		fmt.Fprintln(out, "  .htaccess is never served to clients.")
+	}
+
 	port := flag.Int("port", 8889, "Port to listen on")
 	listenIP := flag.String("ip", "127.0.0.1", "IP to listen on")
 	logFile := flag.String("log", "", "Log file path (empty for stdout)")
@@ -84,6 +97,9 @@ func Parse() (Config, error) {
 	var redirectsFlag multiValueFlag
 	flag.Var(&redirectsFlag, "redirect", "Redirects to add. Can specify multiple.")
 
+	var filtersFlag multiValueFlag
+	flag.Var(&filtersFlag, "filter", "Glob patterns to hide from directory listings and block direct access. Can specify multiple.")
+
 	flag.Parse()
 
 	cfg := Config{
@@ -102,6 +118,7 @@ func Parse() (Config, error) {
 		AllowedIPs:     splitCommaList(*allowedIPs),
 		Headers:        makeMap(headersFlag),
 		Redirects:      makeMap(redirectsFlag),
+		FilterGlobs:    filtersFlag,
 	}
 
 	return cfg, nil

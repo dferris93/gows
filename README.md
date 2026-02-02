@@ -40,6 +40,8 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
     	Require client certificate for TLS (optional)
   -dir string
     	Directory to serve (default ".")
+  -filter value
+    	Glob patterns to hide from directory listings and block direct access. Can specify multiple.
   -header value
     	HTTP headers to include in the response. Can specify multiple.
   -ip string
@@ -142,6 +144,11 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 ./gows -redirect '/g:https://www.google.com' -redirect '/a:https://www.amazon.com'
 ```
 
+* Filter entries from directory listings
+```
+./gows -filter '*.log' -filter 'node_modules' -filter 'private/*'
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
@@ -150,7 +157,10 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * gows blocks hardlinks by default (use `-insecure` to bypass).
 * By default gows will not allow access to dot files (use `-allowdotfiles` to allow them)
 * If a `.htaccess` file is present, it is never served to clients, even with `-insecure` or `-allowdotfiles`
+* If `-cacert`/`-cert`/`-key` files are within (or symlink into) the served directory, gows will never list or serve those files
+* When TLS files live in the served directory, gows also blocks common TLS extensions (`.pem`, `.key`, `.crt`, `.cer`, `.p12`, `.pfx`) from listing or download
 * gows will look for an index.html file, if it isn't found, it will serve the entire directory.
+* `-filter` patterns also block direct access by URL (404).
 * custom headers will only be set if the request is successful
 * If X-Forwarded-For or X-Real-IP is set, that IP will be logged as shown below.
 ```
@@ -161,4 +171,4 @@ ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
 ClientIP - - - [time] "method path HTTP/Version" responseCode bytesSent
 ```
 
-Don't put private information onto the public Internet.  I'm not responsible if you manage to leak data. 
+gows is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.
