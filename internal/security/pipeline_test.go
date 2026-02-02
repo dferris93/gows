@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -52,6 +53,83 @@ func TestTLSFilesReturnNotFound(t *testing.T) {
 		Req:           req,
 		Dir:           dir,
 		BlockTLSFiles: true,
+	}
+
+	result := runDefaultChecks(t, &ctx)
+	if result == nil {
+		t.Fatalf("expected not found result")
+	}
+	if result.Status != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", result.Status)
+	}
+	if result.Public != "404 not found" {
+		t.Fatalf("expected public message to be 404 not found, got %q", result.Public)
+	}
+	if !result.Auth {
+		t.Fatalf("expected auth true for not found response")
+	}
+}
+
+func TestTLSFileSymlinkReturnNotFound(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink test is unreliable on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "server.key")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write tls file: %v", err)
+	}
+	link := filepath.Join(dir, "alias.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/alias.txt", nil)
+	ctx := RequestContext{
+		Req:           req,
+		Dir:           dir,
+		BlockTLSFiles: true,
+		AllowInsecure: true,
+	}
+
+	result := runDefaultChecks(t, &ctx)
+	if result == nil {
+		t.Fatalf("expected not found result")
+	}
+	if result.Status != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", result.Status)
+	}
+	if result.Public != "404 not found" {
+		t.Fatalf("expected public message to be 404 not found, got %q", result.Public)
+	}
+	if !result.Auth {
+		t.Fatalf("expected auth true for not found response")
+	}
+}
+
+func TestTLSFileHardlinkReturnNotFound(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink test is unreliable on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "server.key")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write tls file: %v", err)
+	}
+	link := filepath.Join(dir, "alias.txt")
+	if err := os.Link(target, link); err != nil {
+		t.Skipf("hardlink not supported: %v", err)
+	}
+	tlsInodes, err := BuildTLSInodeIndex(dir)
+	if err != nil {
+		t.Fatalf("build tls inode index: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/alias.txt", nil)
+	ctx := RequestContext{
+		Req:           req,
+		Dir:           dir,
+		BlockTLSFiles: true,
+		TLSInodes:     tlsInodes,
+		AllowInsecure: true,
 	}
 
 	result := runDefaultChecks(t, &ctx)

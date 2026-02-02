@@ -13,13 +13,13 @@ I used go 1.18, which is the Ubuntu 20.04 default.
 ### Installation
 
 ```
-git clone https://github.com/dferris93/gows.git
-cd gows
+git clone https://github.com/dferris93/serv.git
+cd serv
 make
 ```
 
 ### Running
-By default, gows will run on 127.0.0.1:8889
+By default, serv will run on 127.0.0.1:8889
 
 Once, the program is running, point your browser to http://127.0.0.1:8889
 
@@ -66,13 +66,13 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
 * Serve files in $HOME/public_html to the entire world on port 8080
 
 ```
-./gows -dir $HOME/public_html -ip 0.0.0.0 -port 8080 
+./serv -dir $HOME/public_html -ip 0.0.0.0 -port 8080 
 ```
 
 * Serve files in $HOME/public_html to the entire world on port 8080 and log to $HOME/access_log
 
 ```
-./gows -dir $HOME/public_html -ip 0.0.0.0 -port 8080 -log $HOME/access_log
+./serv -dir $HOME/public_html -ip 0.0.0.0 -port 8080 -log $HOME/access_log
 ```
 
 * Make a self signed TLS key pair and serve with it
@@ -82,33 +82,33 @@ openssl req -new -x509 -key server.key -out server.crt -days 365
 
 <answer the questions needed for the CSR>
 
-./gows -cacert server.crt -key server.key -port 8443
+./serv -cacert server.crt -key server.key -port 8443
 
 ```
 
 * Use http basic auth
 ```
-./gows -username admin -password admin 
+./serv -username admin -password admin 
 ```
 
 * Use http basic auth with environment variables
 ```
-export GOWS_USER=admin
-export GOWS_PASS=admin
-./gows -username env:GOWS_USER -password env:GOWS_PASS
+export SERV_USER=admin
+export SERV_PASS=admin
+./serv -username env:SERV_USER -password env:SERV_PASS
 ```
 
 * Use http basic auth with .htaccess (per-directory override)
 ```
 echo "username: admin" > /path/to/served/.htaccess
 echo "password: admin" >> /path/to/served/.htaccess
-./gows -dir /path/to/served
+./serv -dir /path/to/served
 ```
 * If a `.htaccess` file exists in a directory (or any parent up to the served root), its credentials override the CLI `-username`/`-password` for that subtree.
 
 * Use http basic auth with TLS
 ```
-./gows -cacert server.crt -key server.key -username admin -password admin
+./serv -cacert server.crt -key server.key -username admin -password admin
 ```
 
 * TLS cert auth
@@ -122,7 +122,7 @@ echo "password: admin" >> /path/to/served/.htaccess
  openssl req -new -key client-key.pem -out client-csr.pem -subj "/CN=Client"
  openssl x509 -req -in client-csr.pem -CA
 
- ./gows -cacert ca-cert.pem -cert server-cert.pem -key server-key.pem -mtls
+ ./serv -cacert ca-cert.pem -cert server-cert.pem -key server-key.pem -mtls
 
 #And then on the client
 curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cacert ca-cert.pem
@@ -131,36 +131,36 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 
 * Setting Headers
 ```
-./gows -header 'X-Test-Header:Value' -header 'X-Another-Header:Value2' 
+./serv -header 'X-Test-Header:Value' -header 'X-Another-Header:Value2' 
 ```
 
 * IP ACLs
 ```
-./gows -allowedips 192.168.1.0/24,10.10.10.1,172.16.5.0/22
+./serv -allowedips 192.168.1.0/24,10.10.10.1,172.16.5.0/22
 ```
 
 * Redirects
 ```
-./gows -redirect '/g:https://www.google.com' -redirect '/a:https://www.amazon.com'
+./serv -redirect '/g:https://www.google.com' -redirect '/a:https://www.amazon.com'
 ```
 
 * Filter entries from directory listings
 ```
-./gows -filter '*.log' -filter 'node_modules' -filter 'private/*'
+./serv -filter '*.log' -filter 'node_modules' -filter 'private/*'
 ```
 
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
 * TLS is locked to a minimum of version 1.2.  I really don't recommend changing this.
-* By default gows will not follow symlinks outside of the directory tree.
-* gows blocks hardlinks by default (use `-insecure` to bypass).
-* By default gows will not allow access to dot files (use `-allowdotfiles` to allow them)
+* By default serv will not follow symlinks outside of the directory tree.
+* serv blocks hardlinks by default (use `-insecure` to bypass).
+* By default serv will not allow access to dot files (use `-allowdotfiles` to allow them)
 * If a `.htaccess` file is present, it is never served to clients, even with `-insecure` or `-allowdotfiles`
 * Requests for `.htaccess`, sensitive TLS files, or blocked TLS extensions return 404 (including `.htaccess` parse errors)
-* If `-cacert`/`-cert`/`-key` files are within (or symlink into) the served directory, gows will never list or serve those files
-* When TLS files live in the served directory, gows also blocks common TLS extensions (`.pem`, `.key`, `.crt`, `.cer`, `.p12`, `.pfx`) from listing or download
-* gows will look for an index.html file, if it isn't found, it will serve the entire directory.
+* If `-cacert`/`-cert`/`-key` files are within (or symlink into) the served directory, serv will never list or serve those files
+* When TLS files live in the served directory, serv also blocks common TLS extensions (`.pem`, `.key`, `.crt`, `.cer`, `.p12`, `.pfx`) from listing or download
+* serv will look for an index.html file, if it isn't found, it will serve the entire directory.
 * `-filter` patterns also block direct access by URL (404).
 * custom headers will only be set if the request is successful
 * If X-Forwarded-For or X-Real-IP is set, that IP will be logged as shown below.
@@ -172,4 +172,4 @@ ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
 ClientIP - - - [time] "method path HTTP/Version" responseCode bytesSent
 ```
 
-gows is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.
+serv is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.

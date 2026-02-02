@@ -1,6 +1,6 @@
-# gows Summary
+# serv Summary
 
-gows is a lightweight Go HTTP/HTTPS file server with optional basic auth and access controls. It serves a chosen directory, supports TLS with provided cert/key, and includes a custom Finder‑style directory listing (dark theme). The server logs requests in a common format and can be configured with extra headers and redirects.
+serv is a lightweight Go HTTP/HTTPS file server with optional basic auth and access controls. It serves a chosen directory, supports TLS with provided cert/key, and includes a custom Finder‑style directory listing (dark theme). The server logs requests in a common format and can be configured with extra headers and redirects.
 
 Key features
 - Serve a directory over HTTP or HTTPS.

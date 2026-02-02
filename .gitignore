@@ -4,6 +4,7 @@ client-cert.pem
 client-csr.pem
 client-key.pem
 gows
+serv
 server-cert.pem
 server-csr.pem
 server-key.pem

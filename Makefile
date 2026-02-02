@@ -4,7 +4,7 @@ GOBUILD = $(GOCMD) build
 GOCLEAN = $(GOCMD) clean
 
 # Binary output name
-BINARY_NAME = gows
+BINARY_NAME = serv
 
 # Default target
 all: build

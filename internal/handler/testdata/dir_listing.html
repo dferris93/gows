@@ -1,43 +1,9 @@
-package handler
-
-import (
-	"fmt"
-	"html/template"
-	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"sort"
-	"strings"
-	"time"
-
-	"serv/internal/logging"
-	"serv/internal/security"
-)
-
-type dirEntry struct {
-	Name      string
-	Href      string
-	Size      string
-	ModTime   string
-	IconClass string
-}
-
-type dirListingData struct {
-	Title       string
-	Path        string
-	ParentHref  string
-	HasParent   bool
-	Entries     []dirEntry
-	GeneratedAt string
-}
-
-var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
+  <title>Index of /</title>
   <style>
     :root {
       --bg: #0c0f14;
@@ -220,11 +186,11 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
 <body>
   <div class="window">
     <div class="titlebar">
-      <div class="path">{{.Path}}</div>
+      <div class="path">/</div>
     </div>
     <div class="toolbar">
-      <h1>{{.Title}}</h1>
-      <div class="meta">Generated {{.GeneratedAt}}</div>
+      <h1>Index of /</h1>
+      <div class="meta">Generated __GENERATED__</div>
     </div>
     <table>
       <thead>
@@ -235,153 +201,32 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
         </tr>
       </thead>
       <tbody>
-        {{if .HasParent}}
+
+
         <tr>
           <td>
             <div class="name-cell">
-              <span class="icon"></span>
-              <a href="{{.ParentHref}}">..</a>
+              <span class="icon dir"></span>
+              <a href="/alpha/">alpha/</a>
             </div>
           </td>
-          <td class="muted">Parent directory</td>
+          <td class="muted">__MODTIME__</td>
           <td class="muted">--</td>
         </tr>
-        {{end}}
-        {{range .Entries}}
+
         <tr>
           <td>
             <div class="name-cell">
-              <span class="icon {{.IconClass}}"></span>
-              <a href="{{.Href}}">{{.Name}}</a>
+              <span class="icon file"></span>
+              <a href="/z.txt">z.txt</a>
             </div>
           </td>
-          <td class="muted">{{.ModTime}}</td>
-          <td class="muted">{{.Size}}</td>
+          <td class="muted">__MODTIME__</td>
+          <td class="muted">5 B</td>
         </tr>
-        {{end}}
+
       </tbody>
     </table>
   </div>
 </body>
-</html>`))
-
-func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath string, relPath string, ac bool) {
-	if !strings.HasSuffix(r.URL.Path, "/") {
-		target := r.URL.Path + "/"
-		if r.URL.RawQuery != "" {
-			target += "?" + r.URL.RawQuery
-		}
-		http.Redirect(rw, r, target, http.StatusMovedPermanently)
-		logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
-		return
-	}
-
-	entries, err := os.ReadDir(fullPath)
-	if err != nil {
-		h.logAndReturnError(rw, r, ac, "500 internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	filters := h.EntryFilters
-	if len(filters) == 0 {
-		filters = security.DefaultEntryFilters()
-	}
-	listing := make([]dirEntry, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		entryRel := name
-		if relPath != "" {
-			entryRel = path.Join(relPath, name)
-		}
-		entryCtx := security.EntryContext{
-			Dir:           h.Dir,
-			RelPath:       entryRel,
-			Name:          name,
-			AllowDotFiles: h.AllowDotFiles,
-			Sensitive:     h.Sensitive,
-			BlockTLSFiles: h.BlockTLSFiles,
-			TLSInodes:     h.TLSInodes,
-			FilterGlobs:   h.FilterGlobs,
-		}
-		if !security.ApplyEntryFilters(filters, &entryCtx) {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		href := path.Join(r.URL.Path, url.PathEscape(name))
-		iconClass := "file"
-		size := formatBytes(info.Size())
-		if entry.IsDir() {
-			name += "/"
-			href += "/"
-			iconClass = "dir"
-			size = "--"
-		}
-
-		listing = append(listing, dirEntry{
-			Name:      name,
-			Href:      href,
-			Size:      size,
-			ModTime:   info.ModTime().Format("Jan 02, 2006 15:04"),
-			IconClass: iconClass,
-		})
-	}
-
-	sort.Slice(listing, func(i, j int) bool {
-		leftDir := strings.HasSuffix(listing[i].Name, "/")
-		rightDir := strings.HasSuffix(listing[j].Name, "/")
-		if leftDir != rightDir {
-			return leftDir
-		}
-		return strings.ToLower(listing[i].Name) < strings.ToLower(listing[j].Name)
-	})
-
-	data := dirListingData{
-		Title:       "Index of " + r.URL.Path,
-		Path:        r.URL.Path,
-		Entries:     listing,
-		GeneratedAt: time.Now().Format("Jan 02, 2006 15:04"),
-	}
-
-	if r.URL.Path != "/" {
-		parent := path.Dir(strings.TrimSuffix(r.URL.Path, "/"))
-		if parent == "." {
-			parent = "/"
-		}
-		if !strings.HasSuffix(parent, "/") {
-			parent += "/"
-		}
-		data.HasParent = true
-		data.ParentHref = parent
-	}
-
-	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := dirListingTemplate.Execute(rw, data); err != nil {
-		h.logAndReturnError(rw, r, ac, "500 internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
-}
-
-func formatBytes(size int64) string {
-	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
-	}
-
-	units := []string{"KB", "MB", "GB", "TB", "PB"}
-	value := float64(size)
-	for _, unit := range units {
-		value /= 1024
-		if value < 1024 {
-			if value < 10 {
-				return fmt.Sprintf("%.1f %s", value, unit)
-			}
-			return fmt.Sprintf("%.0f %s", value, unit)
-		}
-	}
-
-	return fmt.Sprintf("%.0f PB", value)
-}
+</html>

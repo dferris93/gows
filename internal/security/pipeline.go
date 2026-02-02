@@ -14,6 +14,7 @@ type RequestContext struct {
 	AllowedIPs    IPChecker
 	Sensitive     []SensitiveFile
 	BlockTLSFiles bool
+	TLSInodes     TLSInodeIndex
 	FilterGlobs   []string
 	Username      string
 	Password      string
@@ -35,6 +36,7 @@ type EntryContext struct {
 	AllowDotFiles bool
 	Sensitive     []SensitiveFile
 	BlockTLSFiles bool
+	TLSInodes     TLSInodeIndex
 	FilterGlobs   []string
 }
 
@@ -132,7 +134,7 @@ func CheckFilteredPath(ctx *RequestContext) *CheckResult {
 }
 
 func CheckTLSFiles(ctx *RequestContext) *CheckResult {
-	if ctx.BlockTLSFiles && IsLikelyTLSFile(ctx.RelPath) {
+	if ctx.BlockTLSFiles && IsTLSFilePath(ctx.Dir, ctx.RelPath, ctx.TLSInodes) {
 		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
 	}
 	return nil
@@ -182,7 +184,7 @@ func FilterSensitive(ctx *EntryContext) bool {
 }
 
 func FilterTLSFiles(ctx *EntryContext) bool {
-	if ctx.BlockTLSFiles && IsLikelyTLSFile(ctx.RelPath) {
+	if ctx.BlockTLSFiles && IsTLSFilePath(ctx.Dir, ctx.RelPath, ctx.TLSInodes) {
 		return false
 	}
 	return true

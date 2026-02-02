@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"gows/internal/config"
-	"gows/internal/handler"
-	"gows/internal/logging"
-	"gows/internal/security"
-	"gows/internal/tlsconfig"
+	"serv/internal/config"
+	"serv/internal/handler"
+	"serv/internal/logging"
+	"serv/internal/security"
+	"serv/internal/tlsconfig"
 )
 
 func main() {
@@ -56,6 +56,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	var tlsInodes security.TLSInodeIndex
+	if blockTLSFiles {
+		tlsInodes, err = security.BuildTLSInodeIndex(dir)
+		if err != nil {
+			log.Printf("Error indexing TLS files: %v", err)
+			os.Exit(1)
+		}
+	}
+
 	username := resolveEnvValue(logger, "username", cfg.Username, false)
 	password := resolveEnvValue(logger, "password", cfg.Password, true)
 
@@ -66,6 +75,7 @@ func main() {
 		AllowedIPs:    ipChecker,
 		Sensitive:     sensitiveFiles,
 		BlockTLSFiles: blockTLSFiles,
+		TLSInodes:     tlsInodes,
 		Username:      username,
 		Password:      password,
 		Headers:       cfg.Headers,

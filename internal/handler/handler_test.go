@@ -7,10 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
-	"gows/internal/security"
+	"serv/internal/security"
 )
 
 func newTestHandler(dir string) *Handler {
@@ -216,5 +217,66 @@ func TestHandlerListingFiltersEntries(t *testing.T) {
 	}
 	if strings.Contains(body, "server.key") {
 		t.Fatalf("did not expect server.key in listing")
+	}
+}
+
+func TestHandlerListingFiltersTLSSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink test is unreliable on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "server.key")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write tls file: %v", err)
+	}
+	link := filepath.Join(dir, "alias.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	h.BlockTLSFiles = true
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "alias.txt") {
+		t.Fatalf("did not expect alias.txt in listing")
+	}
+}
+
+func TestHandlerListingFiltersTLSHardlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink test is unreliable on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "server.key")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write tls file: %v", err)
+	}
+	link := filepath.Join(dir, "alias.txt")
+	if err := os.Link(target, link); err != nil {
+		t.Skipf("hardlink not supported: %v", err)
+	}
+	tlsInodes, err := security.BuildTLSInodeIndex(dir)
+	if err != nil {
+		t.Fatalf("build tls inode index: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	h.BlockTLSFiles = true
+	h.TLSInodes = tlsInodes
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "alias.txt") {
+		t.Fatalf("did not expect alias.txt in listing")
 	}
 }

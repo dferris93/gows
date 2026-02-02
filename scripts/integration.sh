@@ -6,9 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 SITE_DIR="$TMP_DIR/site"
 TLS_DIR="$SITE_DIR/tls"
-LOG_FILE="$TMP_DIR/gows.log"
-BIN_PATH="${BIN_PATH:-$TMP_DIR/gows}"
-PID_FILE="${PID_FILE:-/tmp/gows-integration.pid}"
+LOG_FILE="$TMP_DIR/serv.log"
+BIN_PATH="${BIN_PATH:-$TMP_DIR/serv}"
+PID_FILE="${PID_FILE:-/tmp/serv-integration.pid}"
 SERVER_PID=""
 SERVER_PIDS=()
 SERVER_PORT=""
@@ -39,7 +39,7 @@ require_cmd() {
 }
 
 build_binary() {
-  log "building gows"
+  log "building serv"
   (cd "${ROOT_DIR}" && go build -o "${BIN_PATH}" .)
 }
 
@@ -107,7 +107,7 @@ req_extensions = req_ext
 prompt = no
 
 [ dn ]
-CN = gows test client
+CN = serv test client
 
 [ req_ext ]
 extendedKeyUsage = clientAuth
@@ -115,7 +115,7 @@ EOF
 
   openssl genrsa -out "${TLS_DIR}/ca.key" 2048 >/dev/null 2>&1
   openssl req -x509 -new -nodes -key "${TLS_DIR}/ca.key" -sha256 -days 1 \
-    -subj "/CN=gows test ca" -out "${TLS_DIR}/ca.pem" >/dev/null 2>&1
+    -subj "/CN=serv test ca" -out "${TLS_DIR}/ca.pem" >/dev/null 2>&1
 
   openssl genrsa -out "${TLS_DIR}/server.key" 2048 >/dev/null 2>&1
   openssl req -new -key "${TLS_DIR}/server.key" -out "${TLS_DIR}/server.csr" \
@@ -151,7 +151,7 @@ pick_port() {
 start_server() {
   local port="$1"
   shift
-  GOWS_INTEGRATION=1 "${BIN_PATH}" -ip 127.0.0.1 -port "${port}" -dir "${SITE_DIR}" "$@" >"${LOG_FILE}" 2>&1 &
+  SERV_INTEGRATION=1 "${BIN_PATH}" -ip 127.0.0.1 -port "${port}" -dir "${SITE_DIR}" "$@" >"${LOG_FILE}" 2>&1 &
   SERVER_PID="$!"
   SERVER_PIDS+=("${SERVER_PID}")
   printf "%s\n" "${SERVER_PIDS[@]}" >"${PID_FILE}"
@@ -377,7 +377,7 @@ cleanup_stale_pid() {
     if [[ ! -d "/proc/${pid}" ]]; then
       continue
     fi
-    if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -q "GOWS_INTEGRATION=1"; then
+    if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -q "SERV_INTEGRATION=1"; then
       kill "${pid}" >/dev/null 2>&1 || true
     fi
   done <"${PID_FILE}"
@@ -449,15 +449,15 @@ main() {
   stop_server
 
   log "testing basic auth via env"
-  export GOWS_AUTH_USER="envuser"
-  export GOWS_AUTH_PASS="envpass"
-  start_server_retry -username "env:GOWS_AUTH_USER" -password "env:GOWS_AUTH_PASS"
+  export SERV_AUTH_USER="envuser"
+  export SERV_AUTH_PASS="envpass"
+  start_server_retry -username "env:SERV_AUTH_USER" -password "env:SERV_AUTH_PASS"
   port="${SERVER_PORT}"
   wait_for_status "401" "http://127.0.0.1:${port}/hello.txt"
   expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "envuser:envpass"
   stop_server
-  unset GOWS_AUTH_USER
-  unset GOWS_AUTH_PASS
+  unset SERV_AUTH_USER
+  unset SERV_AUTH_PASS
 
   log "testing allowed IPs"
   start_server_retry -allowedips "10.0.0.1"
