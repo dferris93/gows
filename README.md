@@ -1,6 +1,7 @@
 # Simple HTTP Based Go File server
 
 This is a simple go program that will serve files in a specified directory over HTTP.
+Compared to Caddy, `serv` is intentionally narrow: it focuses on lightweight static file serving with explicit flags, while Caddy is a full-featured web server and reverse proxy with automatic HTTPS and broader app routing/config support.
 
 ## Getting Started
 
@@ -51,13 +52,13 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
   -log string
     	Log file path (empty for stdout)
   -password string
-    	Password for basic auth (optional). Use env:VAR to read from an environment variable.
+    	Password for basic auth (optional). Use env:VAR to read from an environment variable or file:/path/to/file to read JSON credentials.
   -port int
     	Port to listen on (default 8889)
   -redirect value
     	Redirects to add. Can specify multiple.
   -username string
-    	Username for basic auth (optional). Use env:VAR to read from an environment variable.
+    	Username for basic auth (optional). Use env:VAR to read from an environment variable or file:/path/to/file to read JSON credentials.
 
 ```
 
@@ -96,6 +97,14 @@ openssl req -new -x509 -key server.key -out server.crt -days 365
 export SERV_USER=admin
 export SERV_PASS=admin
 ./serv -username env:SERV_USER -password env:SERV_PASS
+```
+
+* Use http basic auth with a JSON credentials file
+```
+cat >/tmp/serv-creds.json <<'EOF'
+{"username":"admin","password":"admin"}
+EOF
+./serv -username file:/tmp/serv-creds.json -password file:/tmp/serv-creds.json
 ```
 
 * Use http basic auth with .htaccess (per-directory override)
@@ -161,13 +170,14 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * serv will look for an index.html file, if it isn't found, it will serve the entire directory.
 * `-filter` patterns also block direct access by URL (404).
 * custom headers will only be set if the request is successful
-* If X-Forwarded-For or X-Real-IP is set, that IP will be logged as shown below.
+* Logs always include both proxy and client IP fields.
+* If X-Forwarded-For or X-Real-IP is set, the proxy and client fields are:
 ```
 ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
 ```
-* If no proxy is used the log fomat will be:
+* If no proxy is used, the proxy field is `-` and the client field is the remote address:
 ```
-ClientIP - - - [time] "method path HTTP/Version" responseCode bytesSent
+- ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
 ```
 
 serv is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.
