@@ -34,23 +34,26 @@ func LogRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 	requestMethod := r.Method
 	requestPath := r.URL.Path
 	httpVersion := r.Proto
-	clientIP := ""
 	proxyIP := splitRemoteHost(r.RemoteAddr)
+	clientIP := proxyIP
 
 	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		clientIP = xForwardedFor
+		parts := strings.Split(xForwardedFor, ",")
+		clientIP = strings.TrimSpace(parts[0])
 	} else if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		clientIP = xRealIP
+		clientIP = strings.TrimSpace(xRealIP)
 	} else {
-		clientIP = proxyIP
-		proxyIP = ""
+		proxyIP = "-"
 	}
 
 	if proxyIP == "" {
-		logger.Printf("%s - - - [%s] \"%s %s %s\" %d %d\n", clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
-	} else {
-		logger.Printf("%s %s - - [%s] \"%s %s %s\" %d %d\n", proxyIP, clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
+		proxyIP = "-"
 	}
+	if clientIP == "" {
+		clientIP = "-"
+	}
+
+	logger.Printf("%s %s - - [%s] \"%s %s %s\" %d %d\n", proxyIP, clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
 }
 
 func splitRemoteHost(remoteAddr string) string {
