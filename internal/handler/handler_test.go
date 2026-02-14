@@ -51,6 +51,10 @@ func newUploadRequest(t *testing.T, target string, files []uploadFixture) *http.
 	return req
 }
 
+func newRawUploadRequest(target string, body string) *http.Request {
+	return httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+}
+
 func parseUploadResponse(t *testing.T, rr *httptest.ResponseRecorder) uploadResponse {
 	t.Helper()
 	var payload uploadResponse
@@ -295,6 +299,54 @@ func TestHandlerUploadMultipleFiles(t *testing.T) {
 		if string(data) != file.Content {
 			t.Fatalf("uploaded file %s content = %q, want %q", file.Name, string(data), file.Content)
 		}
+	}
+}
+
+func TestHandlerUploadSingleFileFromURLPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "uploads"), 0o700); err != nil {
+		t.Fatalf("mkdir uploads: %v", err)
+	}
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadMaxBytes = 1024 * 1024
+
+	req := newRawUploadRequest("/uploads/from-url.txt", "one")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	payload := parseUploadResponse(t, rr)
+	if payload.Uploaded != 1 || payload.Failed != 0 {
+		t.Fatalf("unexpected upload summary: %+v", payload)
+	}
+	if len(payload.Files) != 1 || payload.Files[0].Name != "from-url.txt" || payload.Files[0].Status != "uploaded" {
+		t.Fatalf("unexpected upload file result: %+v", payload.Files)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "uploads", "from-url.txt"))
+	if err != nil {
+		t.Fatalf("read uploaded file: %v", err)
+	}
+	if string(data) != "one" {
+		t.Fatalf("uploaded file content = %q, want %q", string(data), "one")
+	}
+}
+
+func TestHandlerUploadSingleFileFromURLPathMissingParent(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+
+	req := newRawUploadRequest("/uploads/missing.txt", "one")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%q", rr.Code, rr.Body.String())
 	}
 }
 

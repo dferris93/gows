@@ -411,42 +411,73 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
         status.textContent = count + " file(s) selected.";
       }
 
+      function buildUploadURL(fileName) {
+        var basePath = window.location.pathname;
+        if (basePath.slice(-1) !== "/") {
+          basePath += "/";
+        }
+        return basePath + encodeURIComponent(fileName);
+      }
+
       async function upload(files) {
         if (!files || files.length === 0) {
           setSelectionMessage(files);
           return;
         }
 
-        var formData = new FormData();
-        for (var i = 0; i < files.length; i++) {
-          formData.append("files", files[i], files[i].name);
-        }
-
         submit.disabled = true;
         zone.classList.add("uploading");
-        status.textContent = "Uploading " + files.length + " file(s)...";
+        status.textContent = "Uploading 0/" + files.length + " file(s)...";
         results.innerHTML = "";
 
         try {
-          var response = await fetch(window.location.pathname + window.location.search, {
-            method: "POST",
-            body: formData
-          });
-          var text = await response.text();
-          var payload = null;
-          try {
-            payload = JSON.parse(text);
-          } catch (e) {
-            payload = null;
+          var uploaded = 0;
+          var failed = 0;
+          var fileResults = [];
+
+          for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            status.textContent = "Uploading " + (i + 1) + "/" + files.length + " file(s)...";
+
+            try {
+              var response = await fetch(buildUploadURL(file.name), {
+                method: "POST",
+                body: file
+              });
+              var text = await response.text();
+              var payload = null;
+              try {
+                payload = JSON.parse(text);
+              } catch (e) {
+                payload = null;
+              }
+
+              if (!payload || !payload.files || payload.files.length === 0) {
+                fileResults.push({
+                  name: file.name,
+                  status: "error",
+                  message: "upload failed (HTTP " + response.status + ")"
+                });
+                failed++;
+                continue;
+              }
+
+              uploaded += payload.uploaded || 0;
+              failed += payload.failed || 0;
+              fileResults.push(payload.files[0]);
+            } catch (err) {
+              fileResults.push({
+                name: file.name,
+                status: "error",
+                message: err.message || "upload failed"
+              });
+              failed++;
+            }
           }
 
-          if (!payload) {
-            throw new Error("Upload failed (HTTP " + response.status + ")");
-          }
-
-          renderResults(payload.files || []);
-          status.textContent = "Uploaded " + payload.uploaded + ", failed " + payload.failed + ".";
-          if (payload.uploaded > 0) {
+          renderResults(fileResults);
+          status.textContent = "Uploaded " + uploaded + ", failed " + failed + ".";
+          if (uploaded > 0) {
             setTimeout(function () {
               window.location.reload();
             }, 600);

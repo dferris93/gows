@@ -179,17 +179,16 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 ./serv -upload -uploadmaxmb 0
 ```
 
-* Upload a file with `curl` (POST to the directory URL)
+* Upload a file with `curl` (filename is in the URL)
 ```
-curl -F "files=@./example.txt" http://127.0.0.1:8889/
+mkdir -p /path/to/served/uploads
+curl -X POST --data-binary @./example.txt http://127.0.0.1:8889/uploads/example.txt
 ```
 
 * Upload multiple files with `curl`
 ```
-curl \
-  -F "files=@./example.txt" \
-  -F "files=@./image.png" \
-  http://127.0.0.1:8889/
+curl -X POST --data-binary @./example.txt http://127.0.0.1:8889/uploads/example.txt
+curl -X POST --data-binary @./image.png  http://127.0.0.1:8889/uploads/image.png
 ```
 
 ## Notes
@@ -205,16 +204,13 @@ curl \
 * `-filter` patterns also block direct access by URL (404).
 * Uploads are disabled by default; enable with `-upload`.
 * Uploads respect ACLs and security rules, including auth/IP restrictions, `-filter` patterns, dotfile policy, and sensitive file protections.
+* Upload requests can target a directory with multipart form data, or a specific file path via `POST /path/to/<filename>`.
 * `.htaccess` uploads are always blocked.
 * custom headers will only be set if the request is successful
-* Logs always include both proxy and client IP fields.
-* If X-Forwarded-For or X-Real-IP is set, the proxy and client fields are:
+* Access logs use Common Log Format (CLF):
 ```
-ProxyIP ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
+host - - [time] "method request-target HTTP/Version" responseCode bytesSent
 ```
-* If no proxy is used, the proxy field is `-` and the client field is the remote address:
-```
-- ClientIP - - [time] "method path HTTP/Version" responseCode bytesSent
-```
+* The `host` field is the client IP from `X-Forwarded-For` (first value) or `X-Real-IP` when present; otherwise the socket remote address is used.
 
 serv is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.

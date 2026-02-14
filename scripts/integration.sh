@@ -63,6 +63,7 @@ setup_site() {
   mkdir -p "${SITE_DIR}/protected"
   mkdir -p "${SITE_DIR}/broken"
   mkdir -p "${SITE_DIR}/subauth"
+  mkdir -p "${SITE_DIR}/uploads"
   mkdir -p "${TMP_DIR}/outside"
   echo "hello" >"${SITE_DIR}/hello.txt"
   echo "secret" >"${SITE_DIR}/.hidden"
@@ -469,16 +470,16 @@ main() {
   local disabled_upload_source disabled_upload_name disabled_upload_target disabled_upload_response disabled_upload_code
   disabled_upload_source="${TMP_DIR}/upload-disabled-source.txt"
   disabled_upload_name="upload-without-flag.txt"
-  disabled_upload_target="${SITE_DIR}/${disabled_upload_name}"
+  disabled_upload_target="${SITE_DIR}/uploads/${disabled_upload_name}"
   disabled_upload_response="${TMP_DIR}/upload-disabled-response.txt"
   printf "upload must be disabled by default" >"${disabled_upload_source}"
   disabled_upload_code="$(curl --silent --show-error --output "${disabled_upload_response}" --write-out "%{http_code}" \
-    -F "files=@${disabled_upload_source};filename=${disabled_upload_name}" "http://127.0.0.1:${port}/")"
+    -X POST --data-binary "@${disabled_upload_source}" "http://127.0.0.1:${port}/uploads/${disabled_upload_name}")"
   if [[ "${disabled_upload_code}" != "405" ]]; then
     fail "expected HTTP 405 when upload is disabled, got ${disabled_upload_code} body=$(cat "${disabled_upload_response}")"
   fi
   expect_file_absent "${disabled_upload_target}"
-  wait_for_log_contains "\"POST / HTTP/1.1\" 405"
+  wait_for_log_contains "\"POST /uploads/${disabled_upload_name} HTTP/1.1\" 405"
   expect_status "302" "http://127.0.0.1:${port}/r"
   expect_location "https://example.com" "http://127.0.0.1:${port}/r"
   if [[ "${SYMLINK_READY}" == "1" ]]; then
@@ -516,13 +517,13 @@ main() {
   local upload_source upload_target upload_name upload_response upload_code upload_payload
   upload_source="${TMP_DIR}/upload-source.txt"
   upload_name="uploaded-integration.txt"
-  upload_target="${SITE_DIR}/${upload_name}"
+  upload_target="${SITE_DIR}/uploads/${upload_name}"
   upload_response="${TMP_DIR}/upload-response.json"
   upload_payload="uploaded integration payload"
   printf "%s" "${upload_payload}" >"${upload_source}"
   register_uploaded_test_file "${upload_target}"
   upload_code="$(curl --silent --show-error --output "${upload_response}" --write-out "%{http_code}" \
-    -F "files=@${upload_source};filename=${upload_name}" "http://127.0.0.1:${port}/")"
+    -X POST --data-binary "@${upload_source}" "http://127.0.0.1:${port}/uploads/${upload_name}")"
   if [[ "${upload_code}" != "201" ]]; then
     fail "expected HTTP 201 for upload, got ${upload_code} body=$(cat "${upload_response}")"
   fi
@@ -533,23 +534,23 @@ main() {
     fail "expected uploaded filename in response body: $(cat "${upload_response}")"
   fi
   expect_file_content "${upload_payload}" "${upload_target}"
-  expect_body "${upload_payload}" "http://127.0.0.1:${port}/${upload_name}"
+  expect_body "${upload_payload}" "http://127.0.0.1:${port}/uploads/${upload_name}"
   cleanup_uploaded_test_files
   expect_file_absent "${upload_target}"
-  expect_status "404" "http://127.0.0.1:${port}/${upload_name}"
+  expect_status "404" "http://127.0.0.1:${port}/uploads/${upload_name}"
+  wait_for_log_contains "\"POST /uploads/${upload_name} HTTP/1.1\" 201"
 
   local blocked_source blocked_response blocked_upload_code
   blocked_source="${TMP_DIR}/upload-htaccess-source.txt"
   blocked_response="${TMP_DIR}/upload-htaccess-response.json"
   printf "username: bad\npassword: bad\n" >"${blocked_source}"
   blocked_upload_code="$(curl --silent --show-error --output "${blocked_response}" --write-out "%{http_code}" \
-    -F "files=@${blocked_source};filename=.htaccess" "http://127.0.0.1:${port}/")"
-  if [[ "${blocked_upload_code}" != "400" ]]; then
-    fail "expected HTTP 400 for blocked upload, got ${blocked_upload_code} body=$(cat "${blocked_response}")"
+    -X POST --data-binary "@${blocked_source}" "http://127.0.0.1:${port}/uploads/.htaccess")"
+  if [[ "${blocked_upload_code}" != "404" ]]; then
+    fail "expected HTTP 404 for blocked upload target, got ${blocked_upload_code} body=$(cat "${blocked_response}")"
   fi
-  wait_for_log_contains "\"POST / HTTP/1.1\" 400"
-  wait_for_log_contains "upload_names=[\".htaccess\"]"
-  expect_file_absent "${SITE_DIR}/.htaccess"
+  wait_for_log_contains "\"POST /uploads/.htaccess HTTP/1.1\" 404"
+  expect_file_absent "${SITE_DIR}/uploads/.htaccess"
   stop_server
 
   log "testing basic auth via env"

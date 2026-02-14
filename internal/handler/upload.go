@@ -34,20 +34,76 @@ func (h *Handler) handleUpload(rw *logging.ResponseWriter, r *http.Request, ctx 
 		return
 	}
 
-	targetDir := filepath.Join(h.Dir, filepath.FromSlash(ctx.RelPath))
-	info, err := os.Stat(targetDir)
+	target, err := h.resolveUploadTarget(ctx.RelPath)
 	if err != nil {
 		http.Error(rw, "404 not found", http.StatusNotFound)
-		return
-	}
-	if !info.IsDir() {
-		http.Error(rw, "400 bad request", http.StatusBadRequest)
 		return
 	}
 
 	if h.UploadMaxBytes > 0 {
 		r.Body = http.MaxBytesReader(rw, r.Body, h.UploadMaxBytes)
 	}
+
+	if target.FileName != "" {
+		h.handleSingleFileUpload(rw, r, target)
+		return
+	}
+	h.handleDirectoryUpload(rw, r, target)
+}
+
+type uploadTarget struct {
+	TargetDir string
+	RelDir    string
+	FileName  string
+}
+
+func (h *Handler) resolveUploadTarget(relPath string) (uploadTarget, error) {
+	targetDir := filepath.Join(h.Dir, filepath.FromSlash(relPath))
+	if info, err := os.Stat(targetDir); err == nil {
+		if info.IsDir() {
+			return uploadTarget{
+				TargetDir: targetDir,
+				RelDir:    relPath,
+			}, nil
+		}
+		relDir := path.Dir(relPath)
+		if relDir == "." {
+			relDir = ""
+		}
+		return uploadTarget{
+			TargetDir: filepath.Dir(targetDir),
+			RelDir:    relDir,
+			FileName:  path.Base(relPath),
+		}, nil
+	} else if !os.IsNotExist(err) {
+		return uploadTarget{}, err
+	}
+
+	if relPath == "" {
+		return uploadTarget{}, os.ErrNotExist
+	}
+
+	relDir := path.Dir(relPath)
+	if relDir == "." {
+		relDir = ""
+	}
+	parentDir := filepath.Join(h.Dir, filepath.FromSlash(relDir))
+	parentInfo, err := os.Stat(parentDir)
+	if err != nil {
+		return uploadTarget{}, err
+	}
+	if !parentInfo.IsDir() {
+		return uploadTarget{}, os.ErrNotExist
+	}
+
+	return uploadTarget{
+		TargetDir: parentDir,
+		RelDir:    relDir,
+		FileName:  path.Base(relPath),
+	}, nil
+}
+
+func (h *Handler) handleDirectoryUpload(rw *logging.ResponseWriter, r *http.Request, target uploadTarget) {
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -65,7 +121,6 @@ func (h *Handler) handleUpload(rw *logging.ResponseWriter, r *http.Request, ctx 
 	if len(files) == 0 {
 		files = r.MultipartForm.File["file"]
 	}
-	logging.SetUploadFilenames(r, uploadFilenames(files))
 	if len(files) == 0 {
 		h.writeUploadResponse(rw, http.StatusBadRequest, uploadResponse{
 			Failed: 1,
@@ -79,7 +134,7 @@ func (h *Handler) handleUpload(rw *logging.ResponseWriter, r *http.Request, ctx 
 
 	resp := uploadResponse{Files: make([]uploadFileResult, 0, len(files))}
 	for _, fileHeader := range files {
-		result := h.storeUploadedFile(targetDir, ctx.RelPath, fileHeader)
+		result := h.storeUploadedFile(target.TargetDir, target.RelDir, fileHeader)
 		resp.Files = append(resp.Files, result)
 		if result.Status == "uploaded" {
 			resp.Uploaded++
@@ -97,12 +152,110 @@ func (h *Handler) handleUpload(rw *logging.ResponseWriter, r *http.Request, ctx 
 	h.writeUploadResponse(rw, status, resp)
 }
 
+func (h *Handler) handleSingleFileUpload(rw *logging.ResponseWriter, r *http.Request, target uploadTarget) {
+	fileName := target.FileName
+	if _, err := sanitizeUploadFilename(fileName); err != nil {
+		h.writeUploadResponse(rw, http.StatusBadRequest, uploadResponse{
+			Failed: 1,
+			Files: []uploadFileResult{{
+				Name:    fileName,
+				Status:  "error",
+				Message: err.Error(),
+			}},
+		})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(16 << 20); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(rw, "413 request entity too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(rw, "400 bad request", http.StatusBadRequest)
+			return
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+
+		files := r.MultipartForm.File["files"]
+		if len(files) == 0 {
+			files = r.MultipartForm.File["file"]
+		}
+		if len(files) != 1 {
+			h.writeUploadResponse(rw, http.StatusBadRequest, uploadResponse{
+				Failed: 1,
+				Files: []uploadFileResult{{
+					Name:    fileName,
+					Status:  "error",
+					Message: "exactly one file is required for filename-in-URL uploads",
+				}},
+			})
+			return
+		}
+
+		src, err := files[0].Open()
+		if err != nil {
+			h.writeUploadResponse(rw, http.StatusBadRequest, uploadResponse{
+				Failed: 1,
+				Files: []uploadFileResult{{
+					Name:    fileName,
+					Status:  "error",
+					Message: "failed to read uploaded file",
+				}},
+			})
+			return
+		}
+		defer src.Close()
+
+		result := h.storeUploadedContent(target.TargetDir, target.RelDir, fileName, src)
+		status := http.StatusCreated
+		resp := uploadResponse{
+			Files: []uploadFileResult{result},
+		}
+		if result.Status == "uploaded" {
+			resp.Uploaded = 1
+		} else {
+			resp.Failed = 1
+			status = http.StatusBadRequest
+		}
+		h.writeUploadResponse(rw, status, resp)
+		return
+	}
+
+	result := h.storeUploadedContent(target.TargetDir, target.RelDir, fileName, r.Body)
+	status := http.StatusCreated
+	resp := uploadResponse{
+		Files: []uploadFileResult{result},
+	}
+	if result.Status == "uploaded" {
+		resp.Uploaded = 1
+	} else {
+		resp.Failed = 1
+		status = http.StatusBadRequest
+	}
+	h.writeUploadResponse(rw, status, resp)
+}
+
 func (h *Handler) storeUploadedFile(targetDir string, relDir string, fileHeader *multipart.FileHeader) uploadFileResult {
 	name, err := sanitizeUploadFilename(fileHeader.Filename)
 	if err != nil {
 		return uploadFileResult{Name: fileHeader.Filename, Status: "error", Message: err.Error()}
 	}
 
+	src, err := fileHeader.Open()
+	if err != nil {
+		return uploadFileResult{Name: name, Status: "error", Message: "failed to read uploaded file"}
+	}
+	defer src.Close()
+
+	return h.storeUploadedContent(targetDir, relDir, name, src)
+}
+
+func (h *Handler) storeUploadedContent(targetDir string, relDir string, name string, src io.Reader) uploadFileResult {
 	relPath := name
 	if relDir != "" {
 		relPath = path.Join(relDir, name)
@@ -111,12 +264,6 @@ func (h *Handler) storeUploadedFile(targetDir string, relDir string, fileHeader 
 	if err := h.checkUploadACLs(relPath); err != nil {
 		return uploadFileResult{Name: name, Status: "error", Message: err.Error()}
 	}
-
-	src, err := fileHeader.Open()
-	if err != nil {
-		return uploadFileResult{Name: name, Status: "error", Message: "failed to read uploaded file"}
-	}
-	defer src.Close()
 
 	dstPath := filepath.Join(targetDir, name)
 	if err := writeUploadedFile(dstPath, src, h.UploadOverwrite); err != nil {
@@ -156,14 +303,6 @@ func (h *Handler) checkUploadACLs(relPath string) error {
 	return nil
 }
 
-func uploadFilenames(files []*multipart.FileHeader) []string {
-	names := make([]string, 0, len(files))
-	for _, file := range files {
-		names = append(names, file.Filename)
-	}
-	return names
-}
-
 func sanitizeUploadFilename(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -179,7 +318,7 @@ func sanitizeUploadFilename(name string) (string, error) {
 	return base, nil
 }
 
-func writeUploadedFile(dstPath string, src multipart.File, overwrite bool) error {
+func writeUploadedFile(dstPath string, src io.Reader, overwrite bool) error {
 	flags := os.O_CREATE | os.O_WRONLY
 	if overwrite {
 		flags |= os.O_TRUNC
