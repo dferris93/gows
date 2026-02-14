@@ -466,6 +466,19 @@ main() {
   expect_status "403" "http://127.0.0.1:${port}/../hello.txt" --path-as-is
   expect_status "403" "http://127.0.0.1:${port}/%2e%2e/hello.txt" --path-as-is
   expect_status "403" "http://127.0.0.1:${port}/%252e%252e/hello.txt" --path-as-is
+  local disabled_upload_source disabled_upload_name disabled_upload_target disabled_upload_response disabled_upload_code
+  disabled_upload_source="${TMP_DIR}/upload-disabled-source.txt"
+  disabled_upload_name="upload-without-flag.txt"
+  disabled_upload_target="${SITE_DIR}/${disabled_upload_name}"
+  disabled_upload_response="${TMP_DIR}/upload-disabled-response.txt"
+  printf "upload must be disabled by default" >"${disabled_upload_source}"
+  disabled_upload_code="$(curl --silent --show-error --output "${disabled_upload_response}" --write-out "%{http_code}" \
+    -F "files=@${disabled_upload_source};filename=${disabled_upload_name}" "http://127.0.0.1:${port}/")"
+  if [[ "${disabled_upload_code}" != "405" ]]; then
+    fail "expected HTTP 405 when upload is disabled, got ${disabled_upload_code} body=$(cat "${disabled_upload_response}")"
+  fi
+  expect_file_absent "${disabled_upload_target}"
+  wait_for_log_contains "\"POST / HTTP/1.1\" 405"
   expect_status "302" "http://127.0.0.1:${port}/r"
   expect_location "https://example.com" "http://127.0.0.1:${port}/r"
   if [[ "${SYMLINK_READY}" == "1" ]]; then
