@@ -179,6 +179,19 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 ./serv -upload -uploadmaxmb 0
 ```
 
+* Upload a file with `curl` (POST to the directory URL)
+```
+curl -F "files=@./example.txt" http://127.0.0.1:8889/
+```
+
+* Upload multiple files with `curl`
+```
+curl \
+  -F "files=@./example.txt" \
+  -F "files=@./image.png" \
+  http://127.0.0.1:8889/
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
