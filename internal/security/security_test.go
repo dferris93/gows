@@ -77,6 +77,24 @@ func TestIsRequestAuthorizedDotFiles(t *testing.T) {
 	}
 }
 
+func TestIsRequestAuthorizedIgnoresDotSegmentsInServeDir(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, ".served")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("mkdir hidden root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "public.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if !IsRequestAuthorized(root, "public.txt", false, false) {
+		t.Fatalf("expected non-dot request path to be authorized")
+	}
+	if IsRequestAuthorized(root, ".hidden", false, false) {
+		t.Fatalf("expected dotfile request path to be unauthorized")
+	}
+}
+
 func TestIsRequestAuthorizedSymlinkEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink test is unreliable on Windows")

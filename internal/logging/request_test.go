@@ -3,6 +3,8 @@ package logging
 import (
 	"bytes"
 	"log"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -81,5 +83,37 @@ func TestSplitRemoteHost(t *testing.T) {
 				t.Fatalf("splitRemoteHost(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLogRequestIncludesUploadFilenamesForMultipartPost(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("files", ".htaccess")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("username: x\npassword: y\n")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.RemoteAddr = "192.168.5.118:5111"
+	SetUploadFilenames(req, []string{".htaccess"})
+
+	LogRequest(logger, req, 116, 400)
+	line := strings.TrimSpace(buf.String())
+
+	if !strings.Contains(line, "\"POST / HTTP/1.1\" 400 116") {
+		t.Fatalf("unexpected request segment: %q", line)
+	}
+	if !strings.Contains(line, "upload_names=[\".htaccess\"]") {
+		t.Fatalf("expected upload filename metadata in log: %q", line)
 	}
 }

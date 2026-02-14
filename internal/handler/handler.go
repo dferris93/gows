@@ -11,19 +11,22 @@ import (
 )
 
 type Handler struct {
-	Dir           string
-	AllowInsecure bool
-	AllowDotFiles bool
-	AllowedIPs    security.IPChecker
-	Sensitive     []security.SensitiveFile
-	Username      string
-	Password      string
-	Headers       map[string]string
-	Redirects     map[string]string
-	FilterGlobs   []string
-	RequestChecks []security.RequestCheck
-	EntryFilters  []security.EntryFilter
-	Logger        *log.Logger
+	Dir             string
+	AllowInsecure   bool
+	AllowDotFiles   bool
+	AllowedIPs      security.IPChecker
+	Sensitive       []security.SensitiveFile
+	Username        string
+	Password        string
+	Headers         map[string]string
+	Redirects       map[string]string
+	FilterGlobs     []string
+	RequestChecks   []security.RequestCheck
+	EntryFilters    []security.EntryFilter
+	UploadEnabled   bool
+	UploadMaxBytes  int64
+	UploadOverwrite bool
+	Logger          *log.Logger
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +54,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if url, ok := h.Redirects[r.URL.Path]; ok {
 		http.Redirect(rw, r, url, http.StatusFound)
+		logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		h.handleUpload(rw, r, &ctx)
 		logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
 		return
 	}

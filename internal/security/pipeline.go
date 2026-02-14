@@ -2,7 +2,6 @@ package security
 
 import (
 	"net/http"
-	"strings"
 )
 
 type RequestContext struct {
@@ -42,10 +41,7 @@ func DefaultRequestChecks() []RequestCheck {
 	return []RequestCheck{
 		CheckAllowedIPs,
 		CheckCleanPath,
-		CheckHtaccessPath,
-		CheckSensitivePath,
-		CheckFilteredPath,
-		CheckDotFiles,
+		CheckPathACL,
 		CheckHtaccess,
 		CheckAuth,
 		CheckRequestAuthorized,
@@ -54,10 +50,7 @@ func DefaultRequestChecks() []RequestCheck {
 
 func DefaultEntryFilters() []EntryFilter {
 	return []EntryFilter{
-		FilterHtaccess,
-		FilterEntryGlobs,
-		FilterSensitive,
-		FilterDotFiles,
+		FilterPathACL,
 	}
 }
 
@@ -107,32 +100,15 @@ func CheckCleanPath(ctx *RequestContext) *CheckResult {
 	return nil
 }
 
-func CheckSensitivePath(ctx *RequestContext) *CheckResult {
-	if IsSensitivePath(ctx.Dir, ctx.RelPath, ctx.Sensitive) {
-		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
-	}
-	return nil
-}
-
-func CheckHtaccessPath(ctx *RequestContext) *CheckResult {
-	if IsHtaccessPath(ctx.RelPath) {
-		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
-	}
-	return nil
-}
-
-func CheckFilteredPath(ctx *RequestContext) *CheckResult {
-	if IsFilteredPath(ctx.RelPath, ctx.FilterGlobs) {
-		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
-	}
-	return nil
-}
-
-func CheckDotFiles(ctx *RequestContext) *CheckResult {
-	if ctx.AllowDotFiles {
-		return nil
-	}
-	if IsDotFile(ctx.Dir, ctx.RelPath) != nil {
+func CheckPathACL(ctx *RequestContext) *CheckResult {
+	reason := EvaluatePathACL(PathACLContext{
+		Dir:           ctx.Dir,
+		RelPath:       ctx.RelPath,
+		AllowDotFiles: ctx.AllowDotFiles,
+		Sensitive:     ctx.Sensitive,
+		FilterGlobs:   ctx.FilterGlobs,
+	})
+	if reason != PathACLAllowed {
 		return &CheckResult{Status: http.StatusNotFound, Public: "404 not found", Auth: true}
 	}
 	return nil
@@ -169,21 +145,13 @@ func CheckRequestAuthorized(ctx *RequestContext) *CheckResult {
 	return nil
 }
 
-func FilterHtaccess(ctx *EntryContext) bool {
-	return !IsHtaccessPath(ctx.RelPath)
-}
-
-func FilterEntryGlobs(ctx *EntryContext) bool {
-	return !IsFilteredEntry(ctx.RelPath, ctx.Name, ctx.FilterGlobs)
-}
-
-func FilterSensitive(ctx *EntryContext) bool {
-	return !IsSensitivePath(ctx.Dir, ctx.RelPath, ctx.Sensitive)
-}
-
-func FilterDotFiles(ctx *EntryContext) bool {
-	if ctx.AllowDotFiles {
-		return true
-	}
-	return !strings.HasPrefix(ctx.Name, ".")
+func FilterPathACL(ctx *EntryContext) bool {
+	return EvaluatePathACL(PathACLContext{
+		Dir:           ctx.Dir,
+		RelPath:       ctx.RelPath,
+		Name:          ctx.Name,
+		AllowDotFiles: ctx.AllowDotFiles,
+		Sensitive:     ctx.Sensitive,
+		FilterGlobs:   ctx.FilterGlobs,
+	}) == PathACLAllowed
 }

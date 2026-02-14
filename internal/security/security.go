@@ -198,8 +198,16 @@ func checkHardLink(root string, relPath string) error {
 }
 
 func IsDotFile(dir string, file string) error {
-	path := filepath.Join(dir, file)
-	for _, part := range strings.Split(path, string(os.PathSeparator)) {
+	_ = dir // Keep signature stable for existing call sites.
+	if file == "" {
+		return nil
+	}
+
+	normalized := strings.ReplaceAll(file, "\\", "/")
+	for _, part := range strings.Split(normalized, "/") {
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
 		if strings.HasPrefix(part, ".") {
 			return fmt.Errorf("dot file detected: %s", file)
 		}

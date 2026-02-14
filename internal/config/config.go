@@ -9,22 +9,25 @@ import (
 )
 
 type Config struct {
-	Port           int
-	ListenIP       string
-	LogFile        string
-	Directory      string
-	CACertFile     string
-	CertFile       string
-	KeyFile        string
-	ClientCertAuth bool
-	Username       string
-	Password       string
-	AllowInsecure  bool
-	AllowDotFiles  bool
-	AllowedIPs     []string
-	Headers        map[string]string
-	Redirects      map[string]string
-	FilterGlobs    []string
+	Port            int
+	ListenIP        string
+	LogFile         string
+	Directory       string
+	CACertFile      string
+	CertFile        string
+	KeyFile         string
+	ClientCertAuth  bool
+	Username        string
+	Password        string
+	AllowInsecure   bool
+	AllowDotFiles   bool
+	AllowedIPs      []string
+	Headers         map[string]string
+	Redirects       map[string]string
+	FilterGlobs     []string
+	UploadEnabled   bool
+	UploadMaxMB     int
+	UploadOverwrite bool
 }
 
 type multiValueFlag []string
@@ -90,11 +93,14 @@ func Parse() (Config, error) {
 	certFile := flag.String("cert", "", "Path to host certificate file for TLS (optional)")
 	keyFile := flag.String("key", "", "Path to private key file for TLS (optional)")
 	clientCertAuth := flag.Bool("mtls", false, "Require client certificate for TLS (optional)")
-	username := flag.String("username", "", "Username for basic auth (optional)")
-	password := flag.String("password", "", "Password for basic auth (optional)")
+	username := flag.String("username", "", "Username for basic auth (optional). Supports env:VAR or file:/path/to/file")
+	password := flag.String("password", "", "Password for basic auth (optional). Supports env:VAR or file:/path/to/file")
 	allowInsecure := flag.Bool("insecure", false, "Allow insecure symlinks and files (optional)")
 	allowDotFiles := flag.Bool("allowdotfiles", false, "Allow files starting with a dot (optional)")
 	allowedIPs := flag.String("allowedips", "", "Comma separated list of allowed IPs (optional)")
+	uploadEnabled := flag.Bool("upload", false, "Enable browser uploads (optional)")
+	uploadMaxMB := flag.Int("uploadmaxmb", 100, "Maximum upload request size in MB (optional, 0 for unlimited)")
+	uploadOverwrite := flag.Bool("uploadoverwrite", false, "Allow uploaded files to overwrite existing files (optional)")
 
 	var headersFlag multiValueFlag
 	flag.Var(&headersFlag, "header", "HTTP headers to include in the response. Can specify multiple.")
@@ -108,22 +114,25 @@ func Parse() (Config, error) {
 	flag.Parse()
 
 	cfg := Config{
-		Port:           *port,
-		ListenIP:       *listenIP,
-		LogFile:        *logFile,
-		Directory:      *directory,
-		CACertFile:     *CACertFile,
-		CertFile:       *certFile,
-		KeyFile:        *keyFile,
-		ClientCertAuth: *clientCertAuth,
-		Username:       *username,
-		Password:       *password,
-		AllowInsecure:  *allowInsecure,
-		AllowDotFiles:  *allowDotFiles,
-		AllowedIPs:     splitCommaList(*allowedIPs),
-		Headers:        makeMap(headersFlag),
-		Redirects:      makeMap(redirectsFlag),
-		FilterGlobs:    filtersFlag,
+		Port:            *port,
+		ListenIP:        *listenIP,
+		LogFile:         *logFile,
+		Directory:       *directory,
+		CACertFile:      *CACertFile,
+		CertFile:        *certFile,
+		KeyFile:         *keyFile,
+		ClientCertAuth:  *clientCertAuth,
+		Username:        *username,
+		Password:        *password,
+		AllowInsecure:   *allowInsecure,
+		AllowDotFiles:   *allowDotFiles,
+		AllowedIPs:      splitCommaList(*allowedIPs),
+		Headers:         makeMap(headersFlag),
+		Redirects:       makeMap(redirectsFlag),
+		FilterGlobs:     filtersFlag,
+		UploadEnabled:   *uploadEnabled,
+		UploadMaxMB:     *uploadMaxMB,
+		UploadOverwrite: *uploadOverwrite,
 	}
 
 	return cfg, nil

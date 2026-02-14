@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -50,23 +51,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	username := resolveEnvValue(logger, "username", cfg.Username, false)
-	password := resolveEnvValue(logger, "password", cfg.Password, true)
+	credentialFileCache := map[string]basicAuthCredentials{}
+	username := resolveCredentialValue(logger, "username", cfg.Username, false, credentialFileCache)
+	password := resolveCredentialValue(logger, "password", cfg.Password, true, credentialFileCache)
 
 	h := &handler.Handler{
-		Dir:           dir,
-		AllowInsecure: cfg.AllowInsecure,
-		AllowDotFiles: cfg.AllowDotFiles,
-		AllowedIPs:    ipChecker,
-		Sensitive:     sensitiveFiles,
-		Username:      username,
-		Password:      password,
-		Headers:       cfg.Headers,
-		Redirects:     cfg.Redirects,
-		FilterGlobs:   cfg.FilterGlobs,
-		RequestChecks: security.DefaultRequestChecks(),
-		EntryFilters:  security.DefaultEntryFilters(),
-		Logger:        logger,
+		Dir:             dir,
+		AllowInsecure:   cfg.AllowInsecure,
+		AllowDotFiles:   cfg.AllowDotFiles,
+		AllowedIPs:      ipChecker,
+		Sensitive:       sensitiveFiles,
+		Username:        username,
+		Password:        password,
+		Headers:         cfg.Headers,
+		Redirects:       cfg.Redirects,
+		FilterGlobs:     cfg.FilterGlobs,
+		RequestChecks:   security.DefaultRequestChecks(),
+		EntryFilters:    security.DefaultEntryFilters(),
+		UploadEnabled:   cfg.UploadEnabled,
+		UploadMaxBytes:  maxUploadBytes(cfg.UploadMaxMB),
+		UploadOverwrite: cfg.UploadOverwrite,
+		Logger:          logger,
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.ListenIP, cfg.Port)
@@ -93,10 +98,25 @@ func main() {
 	}
 }
 
-func resolveEnvValue(logger *log.Logger, label string, value string, warnOnPlain bool) string {
-	const prefix = "env:"
-	if strings.HasPrefix(value, prefix) {
-		key := strings.TrimPrefix(value, prefix)
+func maxUploadBytes(maxMB int) int64 {
+	if maxMB < 0 {
+		maxMB = 100
+	}
+	if maxMB == 0 {
+		return 0
+	}
+	return int64(maxMB) * 1024 * 1024
+}
+
+type basicAuthCredentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func resolveCredentialValue(logger *log.Logger, label string, value string, warnOnPlain bool, fileCache map[string]basicAuthCredentials) string {
+	const envPrefix = "env:"
+	if strings.HasPrefix(value, envPrefix) {
+		key := strings.TrimPrefix(value, envPrefix)
 		if key == "" {
 			logger.Printf("Warning: %s environment variable name is empty", label)
 			return ""
@@ -108,8 +128,41 @@ func resolveEnvValue(logger *log.Logger, label string, value string, warnOnPlain
 		return environmentValue
 	}
 
+	const filePrefix = "file:"
+	if strings.HasPrefix(value, filePrefix) {
+		path := strings.TrimPrefix(value, filePrefix)
+		if path == "" {
+			logger.Printf("Warning: %s file path is empty", label)
+			return ""
+		}
+		creds, ok := fileCache[path]
+		if !ok {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				logger.Printf("Warning: failed to read %s credential file %q: %v", label, path, err)
+				return ""
+			}
+			if err := json.Unmarshal(content, &creds); err != nil {
+				logger.Printf("Warning: failed to parse %s credential file %q as JSON: %v", label, path, err)
+				return ""
+			}
+			fileCache[path] = creds
+		}
+
+		if label == "password" {
+			if creds.Password == "" {
+				logger.Printf("Warning: password missing in credential file %q", path)
+			}
+			return creds.Password
+		}
+		if creds.Username == "" {
+			logger.Printf("Warning: username missing in credential file %q", path)
+		}
+		return creds.Username
+	}
+
 	if warnOnPlain && value != "" {
-		logger.Printf("Warning: password provided via -password is visible to other users; use env:<VAR> instead")
+		logger.Printf("Warning: password provided via -password is visible to other users; use env:<VAR> or file:<PATH> instead")
 	}
 
 	return value

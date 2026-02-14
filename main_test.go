@@ -91,3 +91,15 @@ func TestResolveCredentialValueWarnOnPlainPassword(t *testing.T) {
 		t.Fatalf("expected plain password warning, got logs: %s", logs.String())
 	}
 }
+
+func TestMaxUploadBytes(t *testing.T) {
+	if got := maxUploadBytes(250); got != 250*1024*1024 {
+		t.Fatalf("maxUploadBytes(250) = %d, want %d", got, int64(250*1024*1024))
+	}
+	if got := maxUploadBytes(0); got != 0 {
+		t.Fatalf("maxUploadBytes(0) = %d, want unlimited sentinel 0", got)
+	}
+	if got := maxUploadBytes(-10); got != 100*1024*1024 {
+		t.Fatalf("maxUploadBytes(-10) = %d, want default %d", got, int64(100*1024*1024))
+	}
+}

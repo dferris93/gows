@@ -43,10 +43,18 @@ Path to private key file for TLS (optional).
 Require client certificate for TLS (optional).
 .TP
 .BR \-username " " \fIUSER\fR
-Username for basic auth (optional).
+Username for basic auth (optional). Supports
+.B env:VAR
+or
+.B file:/path/to/file
+for JSON credentials.
 .TP
 .BR \-password " " \fIPASS\fR
-Password for basic auth (optional).
+Password for basic auth (optional). Supports
+.B env:VAR
+or
+.B file:/path/to/file
+for JSON credentials.
 .TP
 .BR \-insecure
 Allow insecure symlinks and files. Disables symlink and hardlink checks.
@@ -66,6 +74,16 @@ Redirects to add. Can specify multiple.
 .BR \-filter " " \fIGLOB\fR
 Glob patterns to hide from directory listings and block direct access.
 Can specify multiple.
+.TP
+.BR \-upload
+Enable browser uploads (optional).
+.TP
+.BR \-uploadmaxmb " " \fIN\fR
+Maximum upload request size in MB (optional). Default is 100.
+Set to 0 for unlimited request size.
+.TP
+.BR \-uploadoverwrite
+Allow uploaded files to overwrite existing files.
 .SH HTACCESS
 If a .htaccess file exists in a directory (or any parent up to the served root),
 its username/password override the CLI \-username/\-password for that subtree.
@@ -92,6 +110,14 @@ Serve over HTTPS with basic auth:
 .RS
 .nf
 serv -cert server.crt -key server.key -username admin -password admin
+.fi
+.RE
+.PP
+Serve with basic auth loaded from a JSON file:
+.PP
+.RS
+.nf
+serv -username file:/tmp/serv-creds.json -password file:/tmp/serv-creds.json
 .fi
 .RE
 .PP

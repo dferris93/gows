@@ -57,6 +57,12 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
     	Port to listen on (default 8889)
   -redirect value
     	Redirects to add. Can specify multiple.
+  -upload
+    	Enable browser uploads (optional)
+  -uploadmaxmb int
+    	Maximum upload request size in MB (optional, 0 for unlimited) (default 100)
+  -uploadoverwrite
+    	Allow uploaded files to overwrite existing files (optional)
   -username string
     	Username for basic auth (optional). Use env:VAR to read from an environment variable or file:/path/to/file to read JSON credentials.
 
@@ -158,6 +164,21 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 ./serv -filter '*.log' -filter 'node_modules' -filter 'private/*'
 ```
 
+* Enable browser drag-and-drop uploads (multi-file)
+```
+./serv -upload
+```
+
+* Enable uploads with a 250MB limit and allow overwrites
+```
+./serv -upload -uploadmaxmb 250 -uploadoverwrite
+```
+
+* Enable uploads with no request size limit
+```
+./serv -upload -uploadmaxmb 0
+```
+
 ## Notes
 
 * I have not tested TLS with an intermediary certificate chain at all, although it should work the same way it works with nginx where you have to order your ca certificates properly in the cacert file.
@@ -169,6 +190,9 @@ curl https://localhost:8889/ --cert client-cert.pem --key client-key.pem  --cace
 * Requests for `.htaccess` or configured TLS cert/key/CA files return 404 (including `.htaccess` parse errors). These files are never listed or served, even if they live in the served tree or are symlinked or hardlinked into it.
 * serv will look for an index.html file, if it isn't found, it will serve the entire directory.
 * `-filter` patterns also block direct access by URL (404).
+* Uploads are disabled by default; enable with `-upload`.
+* Uploads respect ACLs and security rules, including auth/IP restrictions, `-filter` patterns, dotfile policy, and sensitive file protections.
+* `.htaccess` uploads are always blocked.
 * custom headers will only be set if the request is successful
 * Logs always include both proxy and client IP fields.
 * If X-Forwarded-For or X-Real-IP is set, the proxy and client fields are:

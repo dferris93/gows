@@ -136,6 +136,29 @@ func TestDirListingSortOrder(t *testing.T) {
 	}
 }
 
+func TestDirListingUploadUIVisibility(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if strings.Contains(rr.Body.String(), "Drop files to upload") {
+		t.Fatalf("did not expect upload UI when upload is disabled")
+	}
+
+	h.UploadEnabled = true
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	body := rr.Body.String()
+	if !strings.Contains(body, "Drop files to upload") {
+		t.Fatalf("expected upload UI when upload is enabled")
+	}
+	if !strings.Contains(body, "id=\"upload-zone\"") {
+		t.Fatalf("expected upload zone element")
+	}
+}
+
 func TestDirListingSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	alphaDir := filepath.Join(dir, "alpha")

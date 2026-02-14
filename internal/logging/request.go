@@ -1,9 +1,11 @@
 package logging
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,6 +36,7 @@ func LogRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 	requestMethod := r.Method
 	requestPath := r.URL.Path
 	httpVersion := r.Proto
+	extra := formatRequestLogExtra(r)
 	proxyIP := splitRemoteHost(r.RemoteAddr)
 	clientIP := proxyIP
 
@@ -53,7 +56,40 @@ func LogRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 		clientIP = "-"
 	}
 
-	logger.Printf("%s %s - - [%s] \"%s %s %s\" %d %d\n", proxyIP, clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size)
+	logger.Printf("%s %s - - [%s] \"%s %s %s\" %d %d%s\n", proxyIP, clientIP, currentTime, requestMethod, requestPath, httpVersion, statusCode, size, extra)
+}
+
+type uploadFilenamesContextKey struct{}
+
+func SetUploadFilenames(r *http.Request, names []string) {
+	if r == nil {
+		return
+	}
+	trimmed := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		trimmed = append(trimmed, name)
+	}
+	if len(trimmed) == 0 {
+		return
+	}
+	ctx := context.WithValue(r.Context(), uploadFilenamesContextKey{}, trimmed)
+	*r = *r.WithContext(ctx)
+}
+
+func formatRequestLogExtra(r *http.Request) string {
+	names, _ := r.Context().Value(uploadFilenamesContextKey{}).([]string)
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	return " upload_names=[" + strings.Join(quoted, ",") + "]"
 }
 
 func splitRemoteHost(remoteAddr string) string {

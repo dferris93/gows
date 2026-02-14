@@ -24,12 +24,13 @@ type dirEntry struct {
 }
 
 type dirListingData struct {
-	Title       string
-	Path        string
-	ParentHref  string
-	HasParent   bool
-	Entries     []dirEntry
-	GeneratedAt string
+	Title         string
+	Path          string
+	ParentHref    string
+	HasParent     bool
+	Entries       []dirEntry
+	GeneratedAt   string
+	UploadEnabled bool
 }
 
 var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doctype html>
@@ -197,6 +198,98 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       font-size: 12px;
     }
 
+    .upload-panel {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: #101522;
+    }
+
+    .upload-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .upload-zone {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 16px;
+      border: 1px dashed #4a5672;
+      border-radius: 10px;
+      background: #0f1522;
+      cursor: pointer;
+      transition: border-color 120ms ease, background-color 120ms ease;
+    }
+
+    .upload-zone.dragging {
+      border-color: #8eb5ff;
+      background: #1a2234;
+    }
+
+    .upload-zone.uploading {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .upload-zone strong {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .upload-zone span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .upload-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .upload-input {
+      max-width: 100%;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .upload-submit {
+      border: 1px solid #3f4f72;
+      border-radius: 7px;
+      background: #1d2b45;
+      color: #dce8ff;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .upload-submit[disabled] {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .upload-status {
+      margin: 0;
+    }
+
+    .upload-results {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .upload-results .ok {
+      color: #82d4a5;
+    }
+
+    .upload-results .error {
+      color: #ff9a9a;
+    }
+
     @media (max-width: 640px) {
       body {
         padding: 18px 10px 32px;
@@ -226,6 +319,22 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       <h1>{{.Title}}</h1>
       <div class="meta">Generated {{.GeneratedAt}}</div>
     </div>
+    {{if .UploadEnabled}}
+    <div class="upload-panel">
+      <form id="upload-form" class="upload-form" method="post" enctype="multipart/form-data">
+        <label id="upload-zone" class="upload-zone" for="upload-input">
+          <strong>Drop files to upload</strong>
+          <span>or choose files from disk</span>
+        </label>
+        <div class="upload-actions">
+          <input id="upload-input" class="upload-input" type="file" name="files" multiple>
+          <button id="upload-submit" class="upload-submit" type="submit">Upload selected files</button>
+        </div>
+        <p id="upload-status" class="upload-status muted">No files selected.</p>
+        <ul id="upload-results" class="upload-results"></ul>
+      </form>
+    </div>
+    {{end}}
     <table>
       <thead>
         <tr>
@@ -262,6 +371,125 @@ var dirListingTemplate = template.Must(template.New("dir-listing").Parse(`<!doct
       </tbody>
     </table>
   </div>
+  {{if .UploadEnabled}}
+  <script>
+    (function () {
+      var form = document.getElementById("upload-form");
+      if (!form) {
+        return;
+      }
+
+      var zone = document.getElementById("upload-zone");
+      var input = document.getElementById("upload-input");
+      var submit = document.getElementById("upload-submit");
+      var status = document.getElementById("upload-status");
+      var results = document.getElementById("upload-results");
+
+      function renderResults(files) {
+        results.innerHTML = "";
+        for (var i = 0; i < files.length; i++) {
+          var item = files[i];
+          var li = document.createElement("li");
+          li.className = item.status === "uploaded" ? "ok" : "error";
+          var message = item.name || "file";
+          if (item.message) {
+            message += ": " + item.message;
+          } else if (item.status === "uploaded") {
+            message += ": uploaded";
+          }
+          li.textContent = message;
+          results.appendChild(li);
+        }
+      }
+
+      function setSelectionMessage(files) {
+        var count = files ? files.length : 0;
+        if (count === 0) {
+          status.textContent = "No files selected.";
+          return;
+        }
+        status.textContent = count + " file(s) selected.";
+      }
+
+      async function upload(files) {
+        if (!files || files.length === 0) {
+          setSelectionMessage(files);
+          return;
+        }
+
+        var formData = new FormData();
+        for (var i = 0; i < files.length; i++) {
+          formData.append("files", files[i], files[i].name);
+        }
+
+        submit.disabled = true;
+        zone.classList.add("uploading");
+        status.textContent = "Uploading " + files.length + " file(s)...";
+        results.innerHTML = "";
+
+        try {
+          var response = await fetch(window.location.pathname + window.location.search, {
+            method: "POST",
+            body: formData
+          });
+          var text = await response.text();
+          var payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch (e) {
+            payload = null;
+          }
+
+          if (!payload) {
+            throw new Error("Upload failed (HTTP " + response.status + ")");
+          }
+
+          renderResults(payload.files || []);
+          status.textContent = "Uploaded " + payload.uploaded + ", failed " + payload.failed + ".";
+          if (payload.uploaded > 0) {
+            setTimeout(function () {
+              window.location.reload();
+            }, 600);
+          }
+        } catch (err) {
+          status.textContent = err.message || "Upload failed.";
+        } finally {
+          submit.disabled = false;
+          zone.classList.remove("uploading");
+        }
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        upload(input.files);
+      });
+
+      input.addEventListener("change", function () {
+        setSelectionMessage(input.files);
+      });
+
+      ["dragenter", "dragover"].forEach(function (eventName) {
+        zone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          zone.classList.add("dragging");
+        });
+      });
+
+      ["dragleave", "drop"].forEach(function (eventName) {
+        zone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          zone.classList.remove("dragging");
+        });
+      });
+
+      zone.addEventListener("drop", function (event) {
+        upload(event.dataTransfer.files);
+      });
+    })();
+  </script>
+  {{end}}
 </body>
 </html>`))
 
@@ -337,10 +565,11 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 	})
 
 	data := dirListingData{
-		Title:       "Index of " + r.URL.Path,
-		Path:        r.URL.Path,
-		Entries:     listing,
-		GeneratedAt: time.Now().Format("Jan 02, 2006 15:04"),
+		Title:         "Index of " + r.URL.Path,
+		Path:          r.URL.Path,
+		Entries:       listing,
+		GeneratedAt:   time.Now().Format("Jan 02, 2006 15:04"),
+		UploadEnabled: h.UploadEnabled,
 	}
 
 	if r.URL.Path != "/" {

@@ -12,10 +12,12 @@ PID_FILE="${PID_FILE:-/tmp/serv-integration.pid}"
 SERVER_PID=""
 SERVER_PIDS=()
 SERVER_PORT=""
+UPLOADED_TEST_FILES=()
 
 cleanup() {
   stop_all_servers
   cleanup_stale_pid
+  cleanup_uploaded_test_files
   if [[ -f "${PID_FILE}" ]]; then
     rm -f "${PID_FILE}"
   fi
@@ -32,6 +34,20 @@ log() {
 fail() {
   echo "error: $*" >&2
   exit 1
+}
+
+register_uploaded_test_file() {
+  UPLOADED_TEST_FILES+=("$1")
+}
+
+cleanup_uploaded_test_files() {
+  local file
+  for file in "${UPLOADED_TEST_FILES[@]}"; do
+    if [[ -n "${file}" && -e "${file}" ]]; then
+      rm -f "${file}" || true
+    fi
+  done
+  UPLOADED_TEST_FILES=()
 }
 
 require_cmd() {
@@ -365,6 +381,38 @@ expect_curl_fail() {
   fi
 }
 
+expect_file_content() {
+  local expected="$1"
+  local file_path="$2"
+  if [[ ! -f "${file_path}" ]]; then
+    fail "expected file to exist: ${file_path}"
+  fi
+  local actual
+  actual="$(<"${file_path}")"
+  if [[ "${actual}" != "${expected}" ]]; then
+    fail "unexpected file content for ${file_path}: ${actual}"
+  fi
+}
+
+expect_file_absent() {
+  local file_path="$1"
+  if [[ -e "${file_path}" ]]; then
+    fail "expected file to be absent: ${file_path}"
+  fi
+}
+
+wait_for_log_contains() {
+  local expected="$1"
+  local deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)); do
+    if grep -Fq "${expected}" "${LOG_FILE}"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail "expected logs to contain: ${expected}. Logs:\n$(cat "${LOG_FILE}")"
+}
+
 cleanup_stale_pid() {
   if [[ ! -f "${PID_FILE}" ]]; then
     return
@@ -448,6 +496,49 @@ main() {
   expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "user:pass"
   stop_server
 
+  log "testing upload + cleanup"
+  start_server_retry -upload -uploadmaxmb 1
+  port="${SERVER_PORT}"
+  wait_for_url "http://127.0.0.1:${port}/hello.txt"
+  local upload_source upload_target upload_name upload_response upload_code upload_payload
+  upload_source="${TMP_DIR}/upload-source.txt"
+  upload_name="uploaded-integration.txt"
+  upload_target="${SITE_DIR}/${upload_name}"
+  upload_response="${TMP_DIR}/upload-response.json"
+  upload_payload="uploaded integration payload"
+  printf "%s" "${upload_payload}" >"${upload_source}"
+  register_uploaded_test_file "${upload_target}"
+  upload_code="$(curl --silent --show-error --output "${upload_response}" --write-out "%{http_code}" \
+    -F "files=@${upload_source};filename=${upload_name}" "http://127.0.0.1:${port}/")"
+  if [[ "${upload_code}" != "201" ]]; then
+    fail "expected HTTP 201 for upload, got ${upload_code} body=$(cat "${upload_response}")"
+  fi
+  if ! grep -q '"uploaded":[[:space:]]*1' "${upload_response}"; then
+    fail "expected uploaded count in response body: $(cat "${upload_response}")"
+  fi
+  if ! grep -q "\"name\":\"${upload_name}\"" "${upload_response}"; then
+    fail "expected uploaded filename in response body: $(cat "${upload_response}")"
+  fi
+  expect_file_content "${upload_payload}" "${upload_target}"
+  expect_body "${upload_payload}" "http://127.0.0.1:${port}/${upload_name}"
+  cleanup_uploaded_test_files
+  expect_file_absent "${upload_target}"
+  expect_status "404" "http://127.0.0.1:${port}/${upload_name}"
+
+  local blocked_source blocked_response blocked_upload_code
+  blocked_source="${TMP_DIR}/upload-htaccess-source.txt"
+  blocked_response="${TMP_DIR}/upload-htaccess-response.json"
+  printf "username: bad\npassword: bad\n" >"${blocked_source}"
+  blocked_upload_code="$(curl --silent --show-error --output "${blocked_response}" --write-out "%{http_code}" \
+    -F "files=@${blocked_source};filename=.htaccess" "http://127.0.0.1:${port}/")"
+  if [[ "${blocked_upload_code}" != "400" ]]; then
+    fail "expected HTTP 400 for blocked upload, got ${blocked_upload_code} body=$(cat "${blocked_response}")"
+  fi
+  wait_for_log_contains "\"POST / HTTP/1.1\" 400"
+  wait_for_log_contains "upload_names=[\".htaccess\"]"
+  expect_file_absent "${SITE_DIR}/.htaccess"
+  stop_server
+
   log "testing basic auth via env"
   export SERV_AUTH_USER="envuser"
   export SERV_AUTH_PASS="envpass"
@@ -458,6 +549,16 @@ main() {
   stop_server
   unset SERV_AUTH_USER
   unset SERV_AUTH_PASS
+
+  log "testing basic auth via file"
+  cat >"${TMP_DIR}/auth.json" <<'EOF'
+{"username":"fileuser","password":"filepass"}
+EOF
+  start_server_retry -username "file:${TMP_DIR}/auth.json" -password "file:${TMP_DIR}/auth.json"
+  port="${SERVER_PORT}"
+  wait_for_status "401" "http://127.0.0.1:${port}/hello.txt"
+  expect_body "hello" "http://127.0.0.1:${port}/hello.txt" -u "fileuser:filepass"
+  stop_server
 
   log "testing allowed IPs"
   start_server_retry -allowedips "10.0.0.1"

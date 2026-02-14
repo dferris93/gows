@@ -163,6 +163,98 @@
       font-size: 12px;
     }
 
+    .upload-panel {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: #101522;
+    }
+
+    .upload-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .upload-zone {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 16px;
+      border: 1px dashed #4a5672;
+      border-radius: 10px;
+      background: #0f1522;
+      cursor: pointer;
+      transition: border-color 120ms ease, background-color 120ms ease;
+    }
+
+    .upload-zone.dragging {
+      border-color: #8eb5ff;
+      background: #1a2234;
+    }
+
+    .upload-zone.uploading {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .upload-zone strong {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .upload-zone span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .upload-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .upload-input {
+      max-width: 100%;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .upload-submit {
+      border: 1px solid #3f4f72;
+      border-radius: 7px;
+      background: #1d2b45;
+      color: #dce8ff;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .upload-submit[disabled] {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .upload-status {
+      margin: 0;
+    }
+
+    .upload-results {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .upload-results .ok {
+      color: #82d4a5;
+    }
+
+    .upload-results .error {
+      color: #ff9a9a;
+    }
+
     @media (max-width: 640px) {
       body {
         padding: 18px 10px 32px;
@@ -192,6 +284,7 @@
       <h1>Index of /</h1>
       <div class="meta">Generated __GENERATED__</div>
     </div>
+
     <table>
       <thead>
         <tr>
@@ -228,5 +321,6 @@
       </tbody>
     </table>
   </div>
+
 </body>
 </html>

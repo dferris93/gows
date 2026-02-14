@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +21,43 @@ func newTestHandler(dir string) *Handler {
 		Dir:    dir,
 		Logger: log.New(io.Discard, "", 0),
 	}
+}
+
+type uploadFixture struct {
+	Name    string
+	Content string
+}
+
+func newUploadRequest(t *testing.T, target string, files []uploadFixture) *http.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for _, file := range files {
+		part, err := writer.CreateFormFile("files", file.Name)
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := io.WriteString(part, file.Content); err != nil {
+			t.Fatalf("write form file: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, target, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+func parseUploadResponse(t *testing.T, rr *httptest.ResponseRecorder) uploadResponse {
+	t.Helper()
+	var payload uploadResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("parse upload response: %v body=%q", err, rr.Body.String())
+	}
+	return payload
 }
 
 func TestHandlerServesFile(t *testing.T) {
@@ -222,5 +262,161 @@ func TestHandlerListingFiltersEntries(t *testing.T) {
 	}
 	if strings.Contains(body, "server.key") {
 		t.Fatalf("did not expect server.key in listing")
+	}
+}
+
+func TestHandlerUploadMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadMaxBytes = 1024 * 1024
+
+	req := newUploadRequest(t, "/", []uploadFixture{
+		{Name: "first.txt", Content: "one"},
+		{Name: "second.txt", Content: "two"},
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	payload := parseUploadResponse(t, rr)
+	if payload.Uploaded != 2 || payload.Failed != 0 {
+		t.Fatalf("unexpected upload summary: %+v", payload)
+	}
+
+	for _, file := range []uploadFixture{{Name: "first.txt", Content: "one"}, {Name: "second.txt", Content: "two"}} {
+		data, err := os.ReadFile(filepath.Join(dir, file.Name))
+		if err != nil {
+			t.Fatalf("read uploaded file %s: %v", file.Name, err)
+		}
+		if string(data) != file.Content {
+			t.Fatalf("uploaded file %s content = %q, want %q", file.Name, string(data), file.Content)
+		}
+	}
+}
+
+func TestHandlerUploadRespectsFilterAndHtaccessBlock(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.FilterGlobs = []string{"*.log"}
+
+	req := newUploadRequest(t, "/", []uploadFixture{
+		{Name: "visible.log", Content: "blocked"},
+		{Name: ".htaccess", Content: "username: a\npassword: b\n"},
+		{Name: "ok.txt", Content: "ok"},
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	payload := parseUploadResponse(t, rr)
+	if payload.Uploaded != 1 || payload.Failed != 2 {
+		t.Fatalf("unexpected upload summary: %+v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "visible.log")); !os.IsNotExist(err) {
+		t.Fatalf("expected filtered file to be blocked, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".htaccess")); !os.IsNotExist(err) {
+		t.Fatalf("expected .htaccess upload to be blocked, stat err=%v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "ok.txt")); err != nil || string(data) != "ok" {
+		t.Fatalf("expected ok.txt upload success, err=%v data=%q", err, string(data))
+	}
+}
+
+func TestHandlerUploadRequiresAuth(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.Username = "user"
+	h.Password = "pass"
+
+	req := newUploadRequest(t, "/", []uploadFixture{{Name: "first.txt", Content: "one"}})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestHandlerUploadDisabled(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+
+	req := newUploadRequest(t, "/", []uploadFixture{{Name: "first.txt", Content: "one"}})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestHandlerUploadMaxBytesLimit(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadMaxBytes = 8
+
+	req := newUploadRequest(t, "/", []uploadFixture{{Name: "big.txt", Content: "this is larger than eight bytes"}})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandlerUploadUnlimitedWhenMaxBytesZero(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadMaxBytes = 0
+
+	req := newUploadRequest(t, "/", []uploadFixture{{Name: "big.txt", Content: strings.Repeat("x", 2048)}})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "big.txt")); err != nil {
+		t.Fatalf("expected uploaded file to exist: %v", err)
+	}
+}
+
+func TestHandlerUploadRootAllowedWhenServeDirHasDotPathSegment(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, ".served")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("create served dir: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadMaxBytes = 1024 * 1024
+
+	req := newUploadRequest(t, "/", []uploadFixture{{Name: "roman2.py", Content: "print('ok')\n"}})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "roman2.py"))
+	if err != nil {
+		t.Fatalf("expected uploaded file to exist: %v", err)
+	}
+	if string(data) != "print('ok')\n" {
+		t.Fatalf("unexpected uploaded content: %q", string(data))
 	}
 }
