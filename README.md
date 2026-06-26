@@ -76,6 +76,8 @@ Once, the program is running, point your browser to http://127.0.0.1:8889
     	Maximum upload request size in MB (optional, 0 for unlimited) (default 100)
   -uploadoverwrite
     	Allow uploaded files to overwrite existing files (optional)
+  -trustproxyheaders
+    	Trust X-Forwarded-For and X-Real-IP headers in request logs (optional)
   -username string
     	Username for basic auth (optional). Use env:VAR to read from an environment variable or file:/path/to/file to read JSON credentials.
 
@@ -110,6 +112,7 @@ openssl req -new -x509 -key server.key -out server.crt -days 365
 ```
 ./serv -username admin -password admin 
 ```
+Both `-username` and `-password` must resolve to non-empty values. Missing environment variables, unreadable credential files, invalid credential JSON, or partial credentials stop startup.
 
 * Use http basic auth with environment variables
 ```
@@ -240,6 +243,6 @@ curl -X POST --data-binary @./image.png  http://127.0.0.1:8889/uploads/image.png
 ```
 host - - [time] "method request-target HTTP/Version" responseCode bytesSent
 ```
-* The `host` field is the client IP from `X-Forwarded-For` (first value) or `X-Real-IP` when present; otherwise the socket remote address is used.
+* The `host` field is the socket remote address by default. Use `-trustproxyheaders` only behind a trusted proxy that strips client-supplied `X-Forwarded-For` and `X-Real-IP`; when enabled, the first `X-Forwarded-For` value or `X-Real-IP` is logged.
 
 serv is secure by default, but you have to be intelligent.  If you serve your private ssh keys (or other private data) to the Internet, that's on you.

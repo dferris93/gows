@@ -55,6 +55,8 @@ Password for basic auth (optional). Supports
 or
 .B file:/path/to/file
 for JSON credentials.
+If either \-username or \-password is set, both must resolve to non-empty
+values or startup fails.
 .TP
 .BR \-insecure
 Allow insecure symlinks and files. Disables symlink and hardlink checks.
@@ -85,6 +87,10 @@ Set to 0 for unlimited request size.
 .BR \-uploadoverwrite
 Allow uploaded files to overwrite existing files.
 .TP
+.BR \-trustproxyheaders
+Trust X-Forwarded-For and X-Real-IP headers in request logs.
+Use only behind a trusted proxy that strips client-supplied proxy headers.
+.TP
 .BR \-otd " " \fIPATH\fR
 Directory whose files are deleted after one successful full GET.
 Can specify multiple. Relative paths are resolved under the served directory.
@@ -108,6 +114,10 @@ Use \-insecure or \-allowdotfiles only if you understand the risks.
 If TLS cert/key/CA files are configured, serv never lists or serves those
 specific files, even if they live in the served tree or are symlinked or
 hardlinked into it.
+.SH LOGGING
+Access logs use the socket remote address by default.
+With \-trustproxyheaders, logs use the first X-Forwarded-For value or X-Real-IP
+when present.
 .SH EXAMPLES
 Serve the current directory on the default address and port:
 .PP

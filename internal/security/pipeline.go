@@ -30,6 +30,7 @@ type EntryContext struct {
 	Dir           string
 	RelPath       string
 	Name          string
+	AllowInsecure bool
 	AllowDotFiles bool
 	Sensitive     []SensitiveFile
 	FilterGlobs   []string
@@ -51,6 +52,7 @@ func DefaultRequestChecks() []RequestCheck {
 func DefaultEntryFilters() []EntryFilter {
 	return []EntryFilter{
 		FilterPathACL,
+		FilterRequestAuthorized,
 	}
 }
 
@@ -154,4 +156,8 @@ func FilterPathACL(ctx *EntryContext) bool {
 		Sensitive:     ctx.Sensitive,
 		FilterGlobs:   ctx.FilterGlobs,
 	}) == PathACLAllowed
+}
+
+func FilterRequestAuthorized(ctx *EntryContext) bool {
+	return IsRequestAuthorized(ctx.Dir, ctx.RelPath, ctx.AllowInsecure, ctx.AllowDotFiles)
 }

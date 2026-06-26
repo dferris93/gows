@@ -2,6 +2,8 @@ package security
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
@@ -78,12 +80,18 @@ func (c IPChecker) Allowed(remoteAddr string) bool {
 
 func CheckBasicAuth(r *http.Request, expectedUsername string, expectedPassword string) bool {
 	username, password, ok := r.BasicAuth()
-	if ok {
-		if username == expectedUsername && password == expectedPassword {
-			return true
-		}
+	if !ok {
+		return false
 	}
-	return false
+	return constantTimeStringEqual(username, expectedUsername) && constantTimeStringEqual(password, expectedPassword)
+}
+
+func constantTimeStringEqual(left string, right string) bool {
+	leftHash := sha256.Sum256([]byte(left))
+	rightHash := sha256.Sum256([]byte(right))
+	hashesMatch := subtle.ConstantTimeCompare(leftHash[:], rightHash[:])
+	lengthsMatch := subtle.ConstantTimeEq(int32(len(left)), int32(len(right)))
+	return hashesMatch&lengthsMatch == 1
 }
 
 func AuthCheck(r *http.Request, username, password string) bool {
@@ -95,26 +103,25 @@ func AuthCheck(r *http.Request, username, password string) bool {
 
 func CleanRequestPath(urlPath string) (string, error) {
 	decoded := urlPath
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 8; i++ {
 		unescaped, err := url.PathUnescape(decoded)
 		if err != nil {
 			return "", fmt.Errorf("invalid path escape")
 		}
 		if unescaped == decoded {
-			break
+			trimmed := strings.TrimPrefix(decoded, "/")
+			cleaned := path.Clean(trimmed)
+			if cleaned == "." {
+				return "", nil
+			}
+			if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+				return "", fmt.Errorf("path traversal detected")
+			}
+			return cleaned, nil
 		}
 		decoded = unescaped
 	}
-
-	trimmed := strings.TrimPrefix(decoded, "/")
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." {
-		return "", nil
-	}
-	if strings.HasPrefix(cleaned, "..") {
-		return "", fmt.Errorf("path traversal detected")
-	}
-	return cleaned, nil
+	return "", fmt.Errorf("path is excessively encoded")
 }
 
 func IsHtaccessPath(relPath string) bool {

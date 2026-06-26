@@ -30,6 +30,7 @@ type Config struct {
 	UploadOverwrite     bool
 	OneTimeDownloadDirs []string
 	OneTimeUploadDirs   []string
+	TrustProxyHeaders   bool
 }
 
 type multiValueFlag []string
@@ -103,6 +104,7 @@ func Parse() (Config, error) {
 	uploadEnabled := flag.Bool("upload", false, "Enable browser uploads (optional)")
 	uploadMaxMB := flag.Int("uploadmaxmb", 100, "Maximum upload request size in MB (optional, 0 for unlimited)")
 	uploadOverwrite := flag.Bool("uploadoverwrite", false, "Allow uploaded files to overwrite existing files (optional)")
+	trustProxyHeaders := flag.Bool("trustproxyheaders", false, "Trust X-Forwarded-For and X-Real-IP headers in request logs (optional)")
 
 	var headersFlag multiValueFlag
 	flag.Var(&headersFlag, "header", "HTTP headers to include in the response. Can specify multiple.")
@@ -143,6 +145,7 @@ func Parse() (Config, error) {
 		UploadOverwrite:     *uploadOverwrite,
 		OneTimeDownloadDirs: oneTimeDownloadDirsFlag,
 		OneTimeUploadDirs:   oneTimeUploadDirsFlag,
+		TrustProxyHeaders:   *trustProxyHeaders,
 	}
 
 	return cfg, nil

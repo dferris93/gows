@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,62 @@ func TestDirListingSortOrder(t *testing.T) {
 	}
 	if aFile > bFile {
 		t.Fatalf("expected a.txt before B.txt")
+	}
+}
+
+func TestDirListingHidesSymlinkEscapes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink test is unreliable on Windows")
+	}
+
+	dir := t.TempDir()
+	outside := t.TempDir()
+	outsideSecret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(outsideSecret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write outside secret: %v", err)
+	}
+	if err := os.Symlink(outsideSecret, filepath.Join(dir, "escape.txt")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "escape.txt") {
+		t.Fatalf("did not expect symlink escape in listing")
+	}
+}
+
+func TestDirListingHidesHardlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink test is unreliable on Windows")
+	}
+
+	dir := t.TempDir()
+	outside := t.TempDir()
+	source := filepath.Join(outside, "source.txt")
+	if err := os.WriteFile(source, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.Link(source, filepath.Join(dir, "hardlink.txt")); err != nil {
+		t.Skipf("hardlink not supported: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "hardlink.txt") {
+		t.Fatalf("did not expect hardlink in listing")
 	}
 }
 

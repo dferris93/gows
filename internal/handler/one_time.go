@@ -186,24 +186,32 @@ func (h *Handler) releaseOneTimeDownload(key string) {
 	delete(h.oneTimeActive, key)
 }
 
-func (h *Handler) serveOneTimeDownload(rw *logging.ResponseWriter, r *http.Request, fullPath string, info os.FileInfo, key string, authed bool) {
+func (h *Handler) serveOneTimeDownload(rw *logging.ResponseWriter, r *http.Request, fullPath string, file *os.File, info os.FileInfo, key string, authed bool) {
 	if !h.claimOneTimeDownload(key) {
+		_ = file.Close()
 		h.logAndReturnError(rw, r, authed, "404 not found", http.StatusNotFound)
 		return
 	}
 	defer h.releaseOneTimeDownload(key)
-
-	file, err := os.Open(fullPath)
-	if err != nil {
-		h.logAndReturnError(rw, r, authed, "404 not found", http.StatusNotFound)
-		return
-	}
 	defer file.Close()
 
 	http.ServeContent(rw, r, info.Name(), info.ModTime(), file)
-	logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
+	h.logRequest(r, rw)
 
 	if rw.StatusCode != http.StatusOK || rw.WriteErr != nil {
+		return
+	}
+	pathInfo, err := os.Stat(fullPath)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.Printf("Error checking one-time download %q before removal: %v", fullPath, err)
+		}
+		return
+	}
+	if !os.SameFile(info, pathInfo) {
+		if h.Logger != nil {
+			h.Logger.Printf("Skipped removing one-time download %q because the path changed during serving", fullPath)
+		}
 		return
 	}
 	if err := os.Remove(fullPath); err != nil && h.Logger != nil {

@@ -34,6 +34,10 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 }
 
 func LogRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
+	LogRequestWithProxyHeaders(logger, r, size, statusCode, false)
+}
+
+func LogRequestWithProxyHeaders(logger *log.Logger, r *http.Request, size int, statusCode int, trustProxyHeaders bool) {
 	currentTime := time.Now().Format("02/Jan/2006:15:04:05 -0700")
 	requestMethod := r.Method
 	requestPath := r.URL.RequestURI()
@@ -43,11 +47,13 @@ func LogRequest(logger *log.Logger, r *http.Request, size int, statusCode int) {
 	httpVersion := r.Proto
 	clientIP := splitRemoteHost(r.RemoteAddr)
 
-	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		parts := strings.Split(xForwardedFor, ",")
-		clientIP = strings.TrimSpace(parts[0])
-	} else if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		clientIP = strings.TrimSpace(xRealIP)
+	if trustProxyHeaders {
+		if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
+			parts := strings.Split(xForwardedFor, ",")
+			clientIP = strings.TrimSpace(parts[0])
+		} else if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
+			clientIP = strings.TrimSpace(xRealIP)
+		}
 	}
 	if clientIP == "" {
 		clientIP = "-"

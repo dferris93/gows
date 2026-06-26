@@ -538,12 +538,12 @@ func sanitizeUploadFilename(name string) (string, error) {
 }
 
 func writeUploadedFile(dstPath string, src io.Reader, overwrite bool) error {
-	flags := os.O_CREATE | os.O_WRONLY
 	if overwrite {
-		flags |= os.O_TRUNC
-	} else {
-		flags |= os.O_EXCL
+		return writeUploadedFileOverwrite(dstPath, src)
 	}
+
+	flags := os.O_CREATE | os.O_WRONLY
+	flags |= os.O_EXCL
 
 	dst, err := os.OpenFile(dstPath, flags, 0o600)
 	if err != nil {
@@ -561,7 +561,38 @@ func writeUploadedFile(dstPath string, src io.Reader, overwrite bool) error {
 		return copyErr
 	}
 	if closeErr != nil {
+		_ = os.Remove(dstPath)
 		return closeErr
+	}
+	return nil
+}
+
+func writeUploadedFileOverwrite(dstPath string, src io.Reader) error {
+	dir := filepath.Dir(dstPath)
+	base := filepath.Base(dstPath)
+	temp, err := os.CreateTemp(dir, "."+base+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+
+	copyErr := error(nil)
+	if _, err := io.Copy(temp, src); err != nil {
+		copyErr = err
+	}
+	closeErr := temp.Close()
+
+	if copyErr != nil {
+		_ = os.Remove(tempPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tempPath)
+		return closeErr
+	}
+	if err := os.Rename(tempPath, dstPath); err != nil {
+		_ = os.Remove(tempPath)
+		return err
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -92,6 +93,97 @@ func TestHandlerServesFile(t *testing.T) {
 	}
 }
 
+func TestHandlerRejectsSymlinkSwapAfterRequestChecks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink test is unreliable on Windows")
+	}
+
+	dir := t.TempDir()
+	outside := t.TempDir()
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("safe"), 0o600); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	outsideSecret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(outsideSecret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write outside secret: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	swapped := false
+	h.RequestChecks = []security.RequestCheck{
+		func(ctx *security.RequestContext) *security.CheckResult {
+			result := security.RunRequestChecks(security.DefaultRequestChecks(), ctx)
+			if result != nil {
+				return result
+			}
+			if err := os.Remove(victim); err != nil {
+				t.Fatalf("remove victim: %v", err)
+			}
+			if err := os.Symlink(outsideSecret, victim); err != nil {
+				t.Skipf("symlink not supported: %v", err)
+			}
+			swapped = true
+			return nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/victim.txt", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if !swapped {
+		t.Fatalf("expected request check to swap file")
+	}
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after symlink swap, got %d body=%q", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret") {
+		t.Fatalf("response leaked outside file content")
+	}
+}
+
+func TestHandlerRejectsUnsupportedDirectoryMethod(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("body"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%q", rr.Code, rr.Body.String())
+	}
+	if allow := rr.Header().Get("Allow"); allow != "GET, HEAD, POST" {
+		t.Fatalf("unexpected Allow header %q", allow)
+	}
+	if strings.Contains(rr.Body.String(), "hello.txt") {
+		t.Fatalf("unsupported method returned directory listing")
+	}
+}
+
+func TestHandlerRejectsUnsupportedFileMethod(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	req := httptest.NewRequest(http.MethodDelete, "/hello.txt", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%q", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "hello") {
+		t.Fatalf("unsupported method returned file content")
+	}
+}
+
 func TestHandlerDeletesOneTimeDownloadAfterSuccessfulGet(t *testing.T) {
 	dir := t.TempDir()
 	otdDir := filepath.Join(dir, "otd")
@@ -129,6 +221,75 @@ func TestHandlerDeletesOneTimeDownloadAfterSuccessfulGet(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 after one-time download, got %d", rr.Code)
 	}
+}
+
+func TestHandlerOneTimeDownloadDoesNotRemoveChangedPath(t *testing.T) {
+	dir := t.TempDir()
+	otdDir := filepath.Join(dir, "otd")
+	if err := os.Mkdir(otdDir, 0o700); err != nil {
+		t.Fatalf("mkdir otd: %v", err)
+	}
+	path := filepath.Join(otdDir, "once.txt")
+	if err := os.WriteFile(path, []byte("once"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	otdDirs, err := ResolveOneTimeDownloadDirs(dir, []string{"otd"})
+	if err != nil {
+		t.Fatalf("resolve one-time dirs: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	h.OneTimeDownloadDirs = otdDirs
+	h.Headers = map[string]string{"X-Swap-Path": "1"}
+
+	req := httptest.NewRequest(http.MethodGet, "/otd/once.txt", nil)
+	rr := httptest.NewRecorder()
+	rw := &swapOnHeaderRecorder{
+		ResponseRecorder: rr,
+		swap: func() {
+			if err := os.Rename(path, filepath.Join(otdDir, "served.txt")); err != nil {
+				t.Fatalf("rename served file: %v", err)
+			}
+			if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+				t.Fatalf("write replacement: %v", err)
+			}
+		},
+	}
+	h.ServeHTTP(rw, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", rr.Code, rr.Body.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replacement file: %v", err)
+	}
+	if string(data) != "replacement" {
+		t.Fatalf("expected replacement file to remain, got %q", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(otdDir, "served.txt")); err != nil {
+		t.Fatalf("expected originally served file to remain under new name: %v", err)
+	}
+}
+
+type swapOnHeaderRecorder struct {
+	*httptest.ResponseRecorder
+	swapOnce sync.Once
+	swap     func()
+}
+
+func (r *swapOnHeaderRecorder) WriteHeader(statusCode int) {
+	if r.swap != nil {
+		r.swapOnce.Do(r.swap)
+	}
+	r.ResponseRecorder.WriteHeader(statusCode)
+}
+
+func (r *swapOnHeaderRecorder) Write(data []byte) (int, error) {
+	if r.swap != nil {
+		r.swapOnce.Do(r.swap)
+	}
+	return r.ResponseRecorder.Write(data)
 }
 
 func TestHandlerOneTimeDownloadIgnoresHeadAndRange(t *testing.T) {
@@ -794,6 +955,35 @@ func TestHandlerUploadMaxBytesLimit(t *testing.T) {
 
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413, got %d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandlerUploadFailedOverwritePreservesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "existing.txt")
+	if err := os.WriteFile(existingPath, []byte("original"), 0o600); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+
+	h := newTestHandler(dir)
+	h.UploadEnabled = true
+	h.UploadOverwrite = true
+	h.UploadMaxBytes = 4
+
+	req := newRawUploadRequest("/existing.txt", "this body is too large")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	data, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read existing file: %v", err)
+	}
+	if string(data) != "original" {
+		t.Fatalf("expected existing file to be preserved, got %q", string(data))
 	}
 }
 

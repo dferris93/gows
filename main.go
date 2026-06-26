@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"serv/internal/config"
 	"serv/internal/handler"
@@ -68,8 +69,11 @@ func main() {
 	}
 
 	credentialFileCache := map[string]basicAuthCredentials{}
-	username := resolveCredentialValue(logger, "username", cfg.Username, false, credentialFileCache)
-	password := resolveCredentialValue(logger, "password", cfg.Password, true, credentialFileCache)
+	username, password, err := resolveBasicAuthCredentials(logger, cfg.Username, cfg.Password, credentialFileCache)
+	if err != nil {
+		log.Printf("Error configuring basic auth: %v", err)
+		os.Exit(1)
+	}
 
 	h := &handler.Handler{
 		Dir:                 dir,
@@ -89,14 +93,12 @@ func main() {
 		UploadOverwrite:     cfg.UploadOverwrite,
 		OneTimeDownloadDirs: oneTimeDownloadDirs,
 		OneTimeUploadDirs:   oneTimeUploadDirs,
+		TrustProxyHeaders:   cfg.TrustProxyHeaders,
 		Logger:              logger,
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.ListenIP, cfg.Port)
-	server := &http.Server{
-		Addr:    addr,
-		Handler: h,
-	}
+	server := newHTTPServer(addr, h)
 
 	if cfg.CertFile != "" && cfg.KeyFile != "" {
 		config, err := tlsconfig.Configure(cfg.CACertFile, cfg.CertFile, cfg.KeyFile, cfg.ClientCertAuth)
@@ -116,6 +118,17 @@ func main() {
 	}
 }
 
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
 func maxUploadBytes(maxMB int) int64 {
 	if maxMB < 0 {
 		maxMB = 100
@@ -131,57 +144,73 @@ type basicAuthCredentials struct {
 	Password string `json:"password"`
 }
 
-func resolveCredentialValue(logger *log.Logger, label string, value string, warnOnPlain bool, fileCache map[string]basicAuthCredentials) string {
+func resolveBasicAuthCredentials(logger *log.Logger, usernameValue string, passwordValue string, fileCache map[string]basicAuthCredentials) (string, string, error) {
+	username, err := resolveCredentialValue(logger, "username", usernameValue, false, fileCache)
+	if err != nil {
+		return "", "", err
+	}
+	password, err := resolveCredentialValue(logger, "password", passwordValue, true, fileCache)
+	if err != nil {
+		return "", "", err
+	}
+
+	if (usernameValue != "" || passwordValue != "") && (username == "" || password == "") {
+		return "", "", fmt.Errorf("both username and password must be configured for basic auth")
+	}
+
+	return username, password, nil
+}
+
+func resolveCredentialValue(logger *log.Logger, label string, value string, warnOnPlain bool, fileCache map[string]basicAuthCredentials) (string, error) {
 	const envPrefix = "env:"
 	if strings.HasPrefix(value, envPrefix) {
 		key := strings.TrimPrefix(value, envPrefix)
 		if key == "" {
-			logger.Printf("Warning: %s environment variable name is empty", label)
-			return ""
+			return "", fmt.Errorf("%s environment variable name is empty", label)
 		}
 		environmentValue, ok := os.LookupEnv(key)
 		if !ok {
-			logger.Printf("Warning: %s environment variable %q is not set", label, key)
+			return "", fmt.Errorf("%s environment variable %q is not set", label, key)
 		}
-		return environmentValue
+		if environmentValue == "" {
+			return "", fmt.Errorf("%s environment variable %q is empty", label, key)
+		}
+		return environmentValue, nil
 	}
 
 	const filePrefix = "file:"
 	if strings.HasPrefix(value, filePrefix) {
 		path := strings.TrimPrefix(value, filePrefix)
 		if path == "" {
-			logger.Printf("Warning: %s file path is empty", label)
-			return ""
+			return "", fmt.Errorf("%s file path is empty", label)
 		}
 		creds, ok := fileCache[path]
 		if !ok {
 			content, err := os.ReadFile(path)
 			if err != nil {
-				logger.Printf("Warning: failed to read %s credential file %q: %v", label, path, err)
-				return ""
+				return "", fmt.Errorf("read %s credential file %q: %w", label, path, err)
 			}
 			if err := json.Unmarshal(content, &creds); err != nil {
-				logger.Printf("Warning: failed to parse %s credential file %q as JSON: %v", label, path, err)
-				return ""
+				return "", fmt.Errorf("parse %s credential file %q as JSON: %w", label, path, err)
 			}
 			fileCache[path] = creds
 		}
 
 		if label == "password" {
 			if creds.Password == "" {
-				logger.Printf("Warning: password missing in credential file %q", path)
+				return "", fmt.Errorf("password missing in credential file %q", path)
 			}
-			return creds.Password
+			return creds.Password, nil
 		}
 		if creds.Username == "" {
-			logger.Printf("Warning: username missing in credential file %q", path)
+			return "", fmt.Errorf("username missing in credential file %q", path)
 		}
-		return creds.Username
+		return creds.Username, nil
 	}
 
 	if warnOnPlain && value != "" {
 		logger.Printf("Warning: password provided via -password is visible to other users; use env:<VAR> or file:<PATH> instead")
 	}
 
-	return value
+	return value, nil
 }

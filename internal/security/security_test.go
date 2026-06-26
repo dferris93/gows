@@ -61,6 +61,19 @@ func TestCleanRequestPath(t *testing.T) {
 	if _, err := CleanRequestPath("/%252e%252e/secret"); err == nil {
 		t.Fatalf("expected traversal error for double-encoded path")
 	}
+	if _, err := CleanRequestPath("/%25252e%25252e/secret"); err == nil {
+		t.Fatalf("expected traversal error for over-encoded path")
+	}
+	rel, err = CleanRequestPath("/..well-known/security.txt")
+	if err != nil {
+		t.Fatalf("expected non-traversal dot-prefixed name to clean: %v", err)
+	}
+	if rel != "..well-known/security.txt" {
+		t.Fatalf("expected ..well-known/security.txt, got %q", rel)
+	}
+	if _, err := CleanRequestPath("/%2525252525252525252e"); err == nil {
+		t.Fatalf("expected excessive encoding to fail")
+	}
 }
 
 func TestIsRequestAuthorizedDotFiles(t *testing.T) {
@@ -196,6 +209,18 @@ func TestAuthCheckUsesBasicAuth(t *testing.T) {
 	}
 	if AuthCheck(req, "user", "wrong") {
 		t.Fatalf("expected auth to fail")
+	}
+}
+
+func TestConstantTimeStringEqual(t *testing.T) {
+	if !constantTimeStringEqual("secret", "secret") {
+		t.Fatalf("expected equal strings to match")
+	}
+	if constantTimeStringEqual("secret", "SECRET") {
+		t.Fatalf("expected different strings to fail")
+	}
+	if constantTimeStringEqual("secret", "secret-longer") {
+		t.Fatalf("expected different lengths to fail")
 	}
 }
 

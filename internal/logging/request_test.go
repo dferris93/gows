@@ -28,7 +28,7 @@ func TestLogRequestNoProxyUsesRemoteAddress(t *testing.T) {
 	}
 }
 
-func TestLogRequestUsesXForwardedForClientIP(t *testing.T) {
+func TestLogRequestIgnoresXForwardedForByDefault(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
 
@@ -37,6 +37,25 @@ func TestLogRequestUsesXForwardedForClientIP(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "198.51.100.9, 198.51.100.10")
 
 	LogRequest(logger, req, 5, 304)
+	line := strings.TrimSpace(buf.String())
+
+	if !strings.HasPrefix(line, "10.10.0.4 - - [") {
+		t.Fatalf("unexpected log prefix: %q", line)
+	}
+	if !matchesCLF(line, "10.10.0.4", "GET", "/proxied", "HTTP/1.1", 304, 5) {
+		t.Fatalf("log line is not valid CLF: %q", line)
+	}
+}
+
+func TestLogRequestWithProxyHeadersUsesXForwardedForClientIP(t *testing.T) {
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+
+	req := httptest.NewRequest("GET", "http://example.test/proxied", nil)
+	req.RemoteAddr = "10.10.0.4:44321"
+	req.Header.Set("X-Forwarded-For", "198.51.100.9, 198.51.100.10")
+
+	LogRequestWithProxyHeaders(logger, req, 5, 304, true)
 	line := strings.TrimSpace(buf.String())
 
 	if !strings.HasPrefix(line, "198.51.100.9 - - [") {
@@ -55,7 +74,7 @@ func TestLogRequestXRealIPWhenForwardedForMissing(t *testing.T) {
 	req.RemoteAddr = "10.0.0.7:5100"
 	req.Header.Set("X-Real-IP", "198.18.0.20")
 
-	LogRequest(logger, req, 18, 201)
+	LogRequestWithProxyHeaders(logger, req, 18, 201, true)
 	line := strings.TrimSpace(buf.String())
 
 	if !strings.HasPrefix(line, "198.18.0.20 - - [") {

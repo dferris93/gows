@@ -532,7 +532,7 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 			target += "?" + r.URL.RawQuery
 		}
 		http.Redirect(rw, r, target, http.StatusMovedPermanently)
-		logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
+		h.logRequest(r, rw)
 		return
 	}
 
@@ -559,6 +559,7 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 				Dir:           h.Dir,
 				RelPath:       entryRel,
 				Name:          name,
+				AllowInsecure: h.AllowInsecure,
 				AllowDotFiles: h.AllowDotFiles,
 				Sensitive:     h.Sensitive,
 				FilterGlobs:   h.FilterGlobs,
@@ -626,7 +627,7 @@ func (h *Handler) serveDir(rw *logging.ResponseWriter, r *http.Request, fullPath
 		return
 	}
 
-	logging.LogRequest(h.Logger, r, rw.Size, rw.StatusCode)
+	h.logRequest(r, rw)
 }
 
 func formatBytes(size int64) string {
